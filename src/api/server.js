@@ -109,8 +109,8 @@ app.post('/api/match', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Match error:', err);
-    res.status(500).json({ error: 'Matching failed. Please try again.' });
+    console.error('Match error:', err.message, err.stack);
+    res.status(500).json({ error: 'Matching failed: ' + err.message });
   }
 });
 
@@ -275,50 +275,63 @@ function buildProfile(answers) {
 }
 
 async function getCandidates(profile) {
-  let query = supabase
-    .from('properties')
-    .select('*, agents(name, initials, phone, agency:agencies(name))')
-    .eq('listing_status', 'active');
+  try {
+    let query = supabase
+      .from('properties')
+      .select('*');
 
-  // Filter by location — search across city, region, and county
-  // User might type "Cork" but property city might be "Douglas" with region "Cork City"
-  if (profile.city) {
-    const loc = profile.city;
-    query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
-  }
+    // Only filter by listing_status if it exists and is set
+    // Some properties may not have this field set
+    query = query.or('listing_status.eq.active,listing_status.is.null');
 
-  // Don't filter by country — let the location search handle it
-  // This avoids issues with IE vs Ireland etc.
+    // Filter by location — search across city, region, and county
+    if (profile.city) {
+      const loc = profile.city.replace(/'/g, "''"); // escape quotes
+      query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
+    }
 
-  // Budget filter with 30% buffer (let AI handle nuance)
-  // Normalise budget string (handle en-dash vs hyphen)
-  const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
-  const budgetMap = {
-    'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
-    '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
-    '£800K+': [560000, 99999999],
-    'Under €200K': [0, 260000], '€200K-€400K': [140000, 520000],
-    '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
-    '€800K+': [560000, 99999999],
-  };
-  const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
-  query = query.gte('price', minP).lte('price', maxP);
+    // Budget filter with 30% buffer
+    const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
+    const budgetMap = {
+      'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
+      '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
+      '£800K+': [560000, 99999999],
+      'Under €200K': [0, 260000], '€200K-€400K': [140000, 520000],
+      '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
+      '€800K+': [560000, 99999999],
+    };
+    const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
+    query = query.gte('price', minP).lte('price', maxP);
 
-  // Beds based on family size
-  const bedsMap = {
-    'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
-    'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
-    'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
-  };
-  const minBeds = bedsMap[profile.family_size] || 1;
-  query = query.gte('beds', minBeds);
+    // Beds based on family size
+    const bedsMap = {
+      'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
+      'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
+      'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
+    };
+    const minBeds = bedsMap[profile.family_size] || 1;
+    query = query.gte('beds', minBeds);
 
-  const { data, error } = await query.limit(50);
-  if (error) {
-    console.error('Candidate query error:', error);
+    const { data, error } = await query.limit(50);
+    if (error) {
+      console.error('Candidate query error:', error);
+      // If the complex query fails, try a simple fallback
+      console.log('[Match] Trying simple query fallback...');
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('properties')
+        .select('*')
+        .limit(50);
+      if (fallbackError) {
+        console.error('Fallback query also failed:', fallbackError);
+        return [];
+      }
+      return fallbackData || [];
+    }
+    return data || [];
+  } catch (err) {
+    console.error('getCandidates exception:', err);
     return [];
   }
-  return data || [];
 }
 
 async function getEnrichmentBatch(propertyIds) {
@@ -432,7 +445,7 @@ function formatProperty(p) {
       initials: p.agents.initials,
       phone: p.agents.phone,
       agency: p.agents.agency?.name,
-    } : null,
+    } : (p.agent_id ? { name: 'Agent', initials: 'AG', phone: '', agency: '' } : null),
   };
 }
 
