@@ -72,6 +72,23 @@ app.post('/api/match', async (req, res) => {
 
     console.log(`[Match] ${candidates.length} candidates in ${profile.city}`);
 
+    // 2b. Fetch agent data for candidates that have agent_id
+    const agentIds = [...new Set(candidates.filter(c => c.agent_id).map(c => c.agent_id))];
+    let agentMap = {};
+    if (agentIds.length > 0) {
+      const { data: agents } = await supabase
+        .from('agents')
+        .select('id, name, initials, phone, agency_id, agencies(name)')
+        .in('id', agentIds);
+      (agents || []).forEach(a => { agentMap[a.id] = a; });
+    }
+    // Attach agent data to candidates
+    candidates.forEach(c => {
+      if (c.agent_id && agentMap[c.agent_id]) {
+        c._agent = agentMap[c.agent_id];
+      }
+    });
+
     // 3. Get enrichment data for candidates
     const enrichmentMap = await getEnrichmentBatch(candidates.map(c => c.id));
     const propertiesWithEnrichment = candidates.map(p => ({
@@ -109,8 +126,8 @@ app.post('/api/match', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Match error:', err.message, err.stack);
-    res.status(500).json({ error: 'Matching failed: ' + err.message });
+    console.error('Match error:', err);
+    res.status(500).json({ error: 'Matching failed. Please try again.' });
   }
 });
 
@@ -275,56 +292,50 @@ function buildProfile(answers) {
 }
 
 async function getCandidates(profile) {
-  try {
-    // Simple query first — no joins, no complex filters
-    let query = supabase
-      .from('properties')
-      .select('*');
+  let query = supabase
+    .from('properties')
+    .select('*, agents(name, initials, phone, agency:agencies(name))')
+    .eq('listing_status', 'active');
 
-    // Filter by location — search across city, region, and county
-    if (profile.city) {
-      const loc = profile.city;
-      query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
-    }
+  // Filter by location — search across city, region, and county
+  // User might type "Cork" but property city might be "Douglas" with region "Cork City"
+  if (profile.city) {
+    const loc = profile.city;
+    query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
+  }
 
-    // Budget filter with 30% buffer
-    const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
-    const budgetMap = {
-      'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
-      '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
-      '£800K+': [560000, 99999999],
-      'Under €200K': [0, 260000], '€200K-€400K': [140000, 520000],
-      '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
-      '€800K+': [560000, 99999999],
-    };
-    const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
-    if (minP > 0) query = query.gte('price', minP);
-    if (maxP < 99999999) query = query.lte('price', maxP);
+  // Don't filter by country — let the location search handle it
+  // This avoids issues with IE vs Ireland etc.
 
-    // Beds based on family size
-    const bedsMap = {
-      'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
-      'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
-      'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
-    };
-    const minBeds = bedsMap[profile.family_size] || 1;
-    query = query.gte('beds', minBeds);
+  // Budget filter with 30% buffer (let AI handle nuance)
+  // Normalise budget string (handle en-dash vs hyphen)
+  const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
+  const budgetMap = {
+    'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
+    '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
+    '£800K+': [560000, 99999999],
+    'Under €200K': [0, 260000], '€200K-€400K': [140000, 520000],
+    '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
+    '€800K+': [560000, 99999999],
+  };
+  const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
+  query = query.gte('price', minP).lte('price', maxP);
 
-    const { data, error } = await query.limit(50);
-    
-    if (error) {
-      console.error('[Match] Query error:', error.message);
-      // Ultimate fallback — just get ALL properties
-      const { data: all } = await supabase.from('properties').select('*').limit(50);
-      return all || [];
-    }
-    
-    console.log(`[Match] Query returned ${(data || []).length} results`);
-    return data || [];
-  } catch (err) {
-    console.error('[Match] getCandidates exception:', err.message);
+  // Beds based on family size
+  const bedsMap = {
+    'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
+    'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
+    'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
+  };
+  const minBeds = bedsMap[profile.family_size] || 1;
+  query = query.gte('beds', minBeds);
+
+  const { data, error } = await query.limit(50);
+  if (error) {
+    console.error('Candidate query error:', error);
     return [];
   }
+  return data || [];
 }
 
 async function getEnrichmentBatch(propertyIds) {
@@ -433,12 +444,17 @@ function formatProperty(p) {
     commute_city_center: p.commute_city_center,
     image_urls: p.image_urls,
     source_url: p.source_url,
-    agent: p.agents ? {
+    agent: p._agent ? {
+      name: p._agent.name,
+      initials: p._agent.initials || p._agent.name?.split(' ').map(n => n[0]).join(''),
+      phone: p._agent.phone,
+      agency: p._agent.agencies?.name || '',
+    } : (p.agents ? {
       name: p.agents.name,
       initials: p.agents.initials,
       phone: p.agents.phone,
       agency: p.agents.agency?.name,
-    } : null,
+    } : null),
   };
 }
 
