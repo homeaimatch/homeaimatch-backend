@@ -22,7 +22,7 @@ import { enrichProperty } from '../services/enrichment.js';
 // ============================================================
 
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+app.use(cors());
 app.use(express.json());
 
 // Supabase client
@@ -56,10 +56,13 @@ app.post('/api/match', async (req, res) => {
     // 1. Build buyer profile from quiz answers
     const profile = buildProfile(answers);
 
+    console.log(`[Match] Profile: city=${profile.city}, country=${profile.country}, budget=${profile.budget_range}, family=${profile.family_size}`);
+
     // 2. Pre-filter properties from database
     const candidates = await getCandidates(profile);
 
     if (candidates.length === 0) {
+      console.log(`[Match] NO candidates found for city=${profile.city}`);
       return res.json({
         matches: [],
         persona: null,
@@ -277,15 +280,15 @@ async function getCandidates(profile) {
     .select('*, agents(name, initials, phone, agency:agencies(name))')
     .eq('listing_status', 'active');
 
-  // Filter by city if specified (case-insensitive)
+  // Filter by location — search across city, region, and county
+  // User might type "Cork" but property city might be "Douglas" with region "Cork City"
   if (profile.city) {
-    query = query.ilike('city', profile.city);
+    const loc = profile.city;
+    query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
   }
 
-  // Filter by country (case-insensitive)
-  if (profile.country) {
-    query = query.ilike('country', profile.country);
-  }
+  // Don't filter by country — let the location search handle it
+  // This avoids issues with IE vs Ireland etc.
 
   // Budget filter with 30% buffer (let AI handle nuance)
   // Normalise budget string (handle en-dash vs hyphen)
