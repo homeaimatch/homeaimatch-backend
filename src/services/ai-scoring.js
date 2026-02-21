@@ -40,6 +40,9 @@ export async function scoreWithAI(buyerProfile, property, enrichment) {
     return scoreWithRules(buyerProfile, property, enrichment);
   }
 
+  // Helper: ensure value is an array for .join()
+  const toArr = (v) => Array.isArray(v) ? v : (v ? [v] : []);
+
   const prompt = `
 BUYER PROFILE:
 - City: ${buyerProfile.city}
@@ -48,12 +51,12 @@ BUYER PROFILE:
 - Commute priority: ${buyerProfile.commute_priority}
 - Property condition: ${buyerProfile.property_condition}
 - Outdoor space: ${buyerProfile.outdoor_space}
-- Vibe preferences: ${(buyerProfile.vibe || []).join(', ')}
+- Vibe preferences: ${toArr(buyerProfile.vibe).join(', ')}
 - Pets: ${buyerProfile.pets}
 - Parking needs: ${buyerProfile.parking}
-- Dealbreakers: ${(buyerProfile.dealbreakers || []).join(', ')}
-- Priorities: ${(buyerProfile.priorities || []).join(', ')}
-- Lifestyle: ${(buyerProfile.lifestyle || []).join(', ')}
+- Dealbreakers: ${toArr(buyerProfile.dealbreakers).join(', ')}
+- Priorities: ${toArr(buyerProfile.priorities).join(', ')}
+- Lifestyle: ${toArr(buyerProfile.lifestyle).join(', ')}
 
 PROPERTY:
 - Name: ${property.title}
@@ -65,11 +68,11 @@ PROPERTY:
 - City: ${property.city}, Area: ${property.region}
 - Walkability: ${property.walkability}/10
 - Schools: ${property.schools_quality}
-- Parking: ${(property.parking || []).join(', ')}
+- Parking: ${toArr(property.parking).join(', ')}
 - Pet-friendly: ${property.pet_friendly}
 - Dog park nearby: ${property.nearby_dog_park}
-- Neighbourhood vibe: ${(property.neighborhood_vibe || []).join(', ')}
-- Features: ${(property.features || []).join(', ')}
+- Neighbourhood vibe: ${toArr(property.neighborhood_vibe).join(', ')}
+- Features: ${toArr(property.features).join(', ')}
 - Commute to city centre: ${property.commute_city_center} min
 - EPC rating: ${property.epc_rating || 'Unknown'}
 ${enrichment ? `
@@ -146,7 +149,7 @@ export async function generatePersona(profile) {
       messages: [{
         role: 'user',
         content: `Based on this home buyer profile, create a fun 2-sentence buyer persona with an emoji and title.
-Profile: ${profile.family_size}, searching in ${profile.city}, budget ${profile.budget_range}, wants ${profile.outdoor_space} outdoor space, vibe: ${(profile.vibe || []).join(', ')}, priorities: ${(profile.priorities || []).join(', ')}, pets: ${profile.pets}.
+Profile: ${profile.family_size}, searching in ${profile.city}, budget ${profile.budget_range}, wants ${profile.outdoor_space} outdoor space, vibe: ${Array.isArray(profile.vibe) ? profile.vibe.join(', ') : (profile.vibe || '')}, priorities: ${Array.isArray(profile.priorities) ? profile.priorities.join(', ') : (profile.priorities || '')}, pets: ${profile.pets}.
 Return ONLY JSON: { "emoji": "🌿", "title": "The Urban Gardener", "description": "..." }`
       }],
     });
