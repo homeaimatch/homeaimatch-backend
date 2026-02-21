@@ -22,7 +22,7 @@ import { enrichProperty } from '../services/enrichment.js';
 // ============================================================
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
 app.use(express.json());
 
 // Supabase client
@@ -253,7 +253,7 @@ app.post('/api/enrich/:id', async (req, res) => {
 function buildProfile(answers) {
   return {
     city: answers.location || answers.city,
-    country: answers.market || 'UK',
+    country: (answers.market || 'UK').toUpperCase(),
     radius: answers.radius,
     budget_range: answers.budget,
     family_size: answers.family,
@@ -277,17 +277,19 @@ async function getCandidates(profile) {
     .select('*, agents(name, initials, phone, agency:agencies(name))')
     .eq('listing_status', 'active');
 
-  // Filter by city if specified
+  // Filter by city if specified (case-insensitive)
   if (profile.city) {
-    query = query.eq('city', profile.city);
+    query = query.ilike('city', profile.city);
   }
 
-  // Filter by country
+  // Filter by country (case-insensitive)
   if (profile.country) {
-    query = query.eq('country', profile.country);
+    query = query.ilike('country', profile.country);
   }
 
   // Budget filter with 30% buffer (let AI handle nuance)
+  // Normalise budget string (handle en-dash vs hyphen)
+  const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
   const budgetMap = {
     'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
     '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
@@ -296,13 +298,14 @@ async function getCandidates(profile) {
     '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
     '€800K+': [560000, 99999999],
   };
-  const [minP, maxP] = budgetMap[profile.budget_range] || [0, 99999999];
+  const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
   query = query.gte('price', minP).lte('price', maxP);
 
   // Beds based on family size
   const bedsMap = {
-    'Just me': 1, 'Couple': 1, 'Small family (1-2 kids)': 2,
-    'Large family (3+ kids)': 3, 'Sharing with friends': 2,
+    'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
+    'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
+    'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
   };
   const minBeds = bedsMap[profile.family_size] || 1;
   query = query.gte('beds', minBeds);
