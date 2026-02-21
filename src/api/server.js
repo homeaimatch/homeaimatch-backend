@@ -276,17 +276,14 @@ function buildProfile(answers) {
 
 async function getCandidates(profile) {
   try {
+    // Simple query first — no joins, no complex filters
     let query = supabase
       .from('properties')
       .select('*');
 
-    // Only filter by listing_status if it exists and is set
-    // Some properties may not have this field set
-    query = query.or('listing_status.eq.active,listing_status.is.null');
-
     // Filter by location — search across city, region, and county
     if (profile.city) {
-      const loc = profile.city.replace(/'/g, "''"); // escape quotes
+      const loc = profile.city;
       query = query.or(`city.ilike.%${loc}%,region.ilike.%${loc}%,county.ilike.%${loc}%`);
     }
 
@@ -301,7 +298,8 @@ async function getCandidates(profile) {
       '€800K+': [560000, 99999999],
     };
     const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
-    query = query.gte('price', minP).lte('price', maxP);
+    if (minP > 0) query = query.gte('price', minP);
+    if (maxP < 99999999) query = query.lte('price', maxP);
 
     // Beds based on family size
     const bedsMap = {
@@ -313,23 +311,18 @@ async function getCandidates(profile) {
     query = query.gte('beds', minBeds);
 
     const { data, error } = await query.limit(50);
+    
     if (error) {
-      console.error('Candidate query error:', error);
-      // If the complex query fails, try a simple fallback
-      console.log('[Match] Trying simple query fallback...');
-      const { data: fallbackData, error: fallbackError } = await supabase
-        .from('properties')
-        .select('*')
-        .limit(50);
-      if (fallbackError) {
-        console.error('Fallback query also failed:', fallbackError);
-        return [];
-      }
-      return fallbackData || [];
+      console.error('[Match] Query error:', error.message);
+      // Ultimate fallback — just get ALL properties
+      const { data: all } = await supabase.from('properties').select('*').limit(50);
+      return all || [];
     }
+    
+    console.log(`[Match] Query returned ${(data || []).length} results`);
     return data || [];
   } catch (err) {
-    console.error('getCandidates exception:', err);
+    console.error('[Match] getCandidates exception:', err.message);
     return [];
   }
 }
@@ -445,7 +438,7 @@ function formatProperty(p) {
       initials: p.agents.initials,
       phone: p.agents.phone,
       agency: p.agents.agency?.name,
-    } : (p.agent_id ? { name: 'Agent', initials: 'AG', phone: '', agency: '' } : null),
+    } : null,
   };
 }
 
