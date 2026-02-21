@@ -89,7 +89,7 @@ Score this property for this buyer.`;
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 500,
       system: SYSTEM_PROMPT,
       messages: [{ role: 'user', content: prompt }],
@@ -144,7 +144,7 @@ export async function generatePersona(profile) {
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5-20250514',
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 200,
       messages: [{
         role: 'user',
