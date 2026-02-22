@@ -23,7 +23,12 @@ import { enrichProperty } from '../services/enrichment.js';
 // ============================================================
 
 const app = express();
-app.use(cors({ origin: process.env.FRONTEND_URL || '*' }));
+app.use(cors({
+  origin: true,  // reflects the requesting origin — works better than '*' with complex requests
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
 app.use(express.json());
 
 // Supabase client
