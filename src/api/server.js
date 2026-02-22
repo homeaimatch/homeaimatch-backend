@@ -45,6 +45,33 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Diagnostic: check if agent tables exist
+app.get('/api/agents/health', async (req, res) => {
+  const checks = {};
+  try {
+    const { error: e1 } = await supabase.from('agents').select('id').limit(1);
+    checks.agents_table = e1 ? e1.message : 'ok';
+  } catch (e) { checks.agents_table = e.message; }
+  try {
+    const { error: e2 } = await supabase.from('agent_sessions').select('id').limit(1);
+    checks.agent_sessions_table = e2 ? e2.message : 'ok';
+  } catch (e) { checks.agent_sessions_table = e.message; }
+  try {
+    const { error: e3 } = await supabase.from('agent_notifications').select('id').limit(1);
+    checks.agent_notifications_table = e3 ? e3.message : 'ok';
+  } catch (e) { checks.agent_notifications_table = e.message; }
+  try {
+    const { error: e4 } = await supabase.from('listing_claims').select('id').limit(1);
+    checks.listing_claims_table = e4 ? e4.message : 'ok';
+  } catch (e) { checks.listing_claims_table = e.message; }
+  try {
+    // Check if email column exists on agents
+    const { error: e5 } = await supabase.from('agents').select('email').limit(1);
+    checks.agents_email_column = e5 ? e5.message : 'ok';
+  } catch (e) { checks.agents_email_column = e.message; }
+  res.json({ checks });
+});
+
 // ============================================================
 // MATCHING — The core feature
 // ============================================================
@@ -584,8 +611,8 @@ app.post('/api/agents/register', async (req, res) => {
 
     res.json({ agent, token });
   } catch (err) {
-    console.error('Register error:', err.message);
-    res.status(500).json({ error: err.message });
+    console.error('Register error:', err.message, err.details || '', err.hint || '');
+    res.status(500).json({ error: err.message || 'Registration failed' });
   }
 });
 
