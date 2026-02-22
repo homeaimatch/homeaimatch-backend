@@ -683,7 +683,7 @@ app.get('/api/agents/dashboard', authAgent, async (req, res) => {
     // My properties (directly assigned)
     const { data: myProperties, count: propCount } = await supabase
       .from('properties')
-      .select('id, title, price, currency, beds, baths, sqm, city, region, image_urls, listing_status', { count: 'exact' })
+      .select('*', { count: 'exact' })
       .eq('agent_id', agentId)
       .order('created_at', { ascending: false });
 
