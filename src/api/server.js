@@ -231,7 +231,7 @@ app.post('/api/leads', async (req, res) => {
       buyer_email,
       buyer_message,
       property_id,
-      agent_id: property?.agents?.id || null,
+      agent_id: property?.agent_id || null,
       agency_id: property?.agents?.agency_id || null,
       match_score,
       status: 'new',
