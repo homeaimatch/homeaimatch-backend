@@ -215,7 +215,7 @@ app.post('/api/properties', async (req, res) => {
 // ============================================================
 
 app.post('/api/leads', async (req, res) => {
-  const { buyer_name, buyer_email, buyer_message, property_id, match_score } = req.body;
+  const { buyer_name, buyer_email, buyer_message, property_id, match_score, buyer_profile } = req.body;
 
   // Get property and its agent
   const { data: property } = await supabase
@@ -234,6 +234,7 @@ app.post('/api/leads', async (req, res) => {
       agent_id: property?.agent_id || null,
       agency_id: property?.agents?.agency_id || null,
       match_score,
+      buyer_profile: buyer_profile || null,
       status: 'new',
     })
     .select()
@@ -697,7 +698,7 @@ app.get('/api/agents/dashboard', authAgent, async (req, res) => {
     // My leads
     const { data: leads, error: leadsError } = await supabase
       .from('leads')
-      .select('id, buyer_name, buyer_email, buyer_phone, buyer_message, status, created_at, match_score, property_id, properties(title, price, currency, city, image_urls)')
+      .select('id, buyer_name, buyer_email, buyer_phone, buyer_message, buyer_profile, status, created_at, match_score, property_id, properties(title, price, currency, city, image_urls)')
       .eq('agent_id', agentId)
       .order('created_at', { ascending: false })
       .limit(50);
