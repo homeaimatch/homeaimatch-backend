@@ -749,21 +749,24 @@ app.get('/api/agents/dashboard', authAgent, async (req, res) => {
 // Get unclaimed properties (for agent to browse and claim)
 app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
   try {
-    const { city, search } = req.query;
+    const { search } = req.query;
     let query = supabase
       .from('properties')
       .select('id, title, price, currency, beds, baths, sqm, city, region, county, image_urls, source_url, agent_id')
-      .is('agent_id', null)
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(100);
 
-    if (city) query = query.ilike('city', `%${city}%`);
-    if (search) query = query.or(`title.ilike.%${search}%,region.ilike.%${search}%,address_line1.ilike.%${search}%`);
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,region.ilike.%${search}%,city.ilike.%${search}%,county.ilike.%${search}%`);
+    }
 
     const { data, error } = await query;
     if (error) throw error;
 
-    res.json({ properties: data || [] });
+    // Filter out properties already owned by this agent
+    const claimable = (data || []).filter(p => p.agent_id !== req.agentId);
+
+    res.json({ properties: claimable });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
