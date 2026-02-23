@@ -695,12 +695,17 @@ app.get('/api/agents/dashboard', authAgent, async (req, res) => {
       .order('claimed_at', { ascending: false });
 
     // My leads
-    const { data: leads } = await supabase
+    const { data: leads, error: leadsError } = await supabase
       .from('leads')
-      .select('id, buyer_name, buyer_email, buyer_phone, message, status, created_at, property_id, properties(title, price, city)')
+      .select('id, buyer_name, buyer_email, buyer_phone, buyer_message, status, created_at, match_score, property_id, properties(title, price, currency, city, image_urls)')
       .eq('agent_id', agentId)
       .order('created_at', { ascending: false })
       .limit(50);
+
+    if (leadsError) {
+      console.error('[Dashboard] Leads query error:', leadsError.message, leadsError.details);
+    }
+    console.log(`[Dashboard] Agent ${agentId} — found ${(leads || []).length} leads`);
 
     // Unread notifications count
     const { count: unreadCount } = await supabase
