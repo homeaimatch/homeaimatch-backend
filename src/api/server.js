@@ -468,6 +468,8 @@ function formatProperty(p) {
     commute_city_center: p.commute_city_center,
     image_urls: p.image_urls,
     source_url: p.source_url,
+    latitude: p.latitude,
+    longitude: p.longitude,
     agent: p.agents ? {
       name: p.agents.name,
       initials: p.agents.initials,
