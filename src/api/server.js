@@ -274,6 +274,62 @@ app.post('/api/subscribe', async (req, res) => {
 });
 
 // ============================================================
+// CONTACT FORM
+// ============================================================
+
+app.post('/api/contact', async (req, res) => {
+  const { name, email, type, message } = req.body;
+
+  if (!name || !email || !message) {
+    return res.status(400).json({ error: 'Name, email, and message are required' });
+  }
+
+  const { error } = await supabase
+    .from('contact_messages')
+    .insert({ name, email, type: type || 'other', message });
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ message: 'Message received! We will get back to you within 24 hours.' });
+});
+
+app.get('/api/admin/contact-messages', async (req, res) => {
+  const { data, error } = await supabase
+    .from('contact_messages')
+    .select('*')
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ messages: data });
+});
+
+// ============================================================
+// ADMIN DASHBOARD ENDPOINTS
+// ============================================================
+
+app.get('/api/admin/stats', async (req, res) => {
+  try {
+    const [properties, agents, leads, subscribers, contacts] = await Promise.all([
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id', { count: 'exact' }),
+      supabase.from('agents').select('id, name, email, created_at, subscription_tier', { count: 'exact' }),
+      supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }),
+      supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }),
+      supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }),
+    ]);
+
+    res.json({
+      properties: { data: properties.data || [], count: properties.count || 0 },
+      agents: { data: agents.data || [], count: agents.count || 0 },
+      leads: { data: leads.data || [], count: leads.count || 0 },
+      subscribers: { data: subscribers.data || [], count: subscribers.count || 0 },
+      contacts: { data: contacts.data || [], count: contacts.count || 0 },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // ENRICHMENT ENDPOINT (manual trigger)
 // ============================================================
 
