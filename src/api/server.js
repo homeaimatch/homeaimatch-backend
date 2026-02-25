@@ -311,7 +311,7 @@ app.get('/api/admin/stats', async (req, res) => {
   try {
     const [properties, agents, leads, subscribers, contacts] = await Promise.all([
       supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id', { count: 'exact' }),
-      supabase.from('agents').select('id, name, email, created_at, subscription_tier', { count: 'exact' }),
+      supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }),
       supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }),
       supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }),
       supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }),
