@@ -330,6 +330,99 @@ app.get('/api/admin/stats', async (req, res) => {
 });
 
 // ============================================================
+// BULK PROPERTY IMPORT
+// ============================================================
+
+app.post('/api/admin/bulk-import', async (req, res) => {
+  const { properties } = req.body;
+  if (!Array.isArray(properties) || properties.length === 0) {
+    return res.status(400).json({ error: 'No properties provided' });
+  }
+  if (properties.length > 100) {
+    return res.status(400).json({ error: 'Maximum 100 properties per import' });
+  }
+
+  const results = { inserted: 0, errors: [], enriching: 0 };
+
+  for (const p of properties) {
+    try {
+      // Validate required fields
+      if (!p.title || !p.price || !p.beds || !p.property_type || !p.city) {
+        results.errors.push({ title: p.title || 'Unknown', error: 'Missing required fields (title, price, beds, property_type, city)' });
+        continue;
+      }
+
+      // Handle agent upsert if provided
+      let agentId = null;
+      if (p.agent_name) {
+        agentId = await upsertAgent({
+          name: p.agent_name,
+          agency: p.agent_agency || 'Independent',
+          phone: p.agent_phone || '',
+        });
+      }
+
+      // Build image_urls array from individual fields
+      const imageUrls = [p.image_url_1, p.image_url_2, p.image_url_3].filter(Boolean);
+
+      // Parse comma-separated fields
+      const features = p.features ? p.features.split(',').map(f => f.trim()).filter(Boolean) : [];
+      const parking = p.parking ? p.parking.split(',').map(f => f.trim()).filter(Boolean) : [];
+
+      const { data, error } = await supabase
+        .from('properties')
+        .insert({
+          title: p.title,
+          price: Number(p.price),
+          currency: 'EUR',
+          beds: Number(p.beds),
+          baths: Number(p.baths) || 1,
+          sqm: Number(p.sqm) || null,
+          sqft: p.sqm ? Math.round(Number(p.sqm) * 10.764) : null,
+          property_type: p.property_type,
+          style: p.style || 'traditional',
+          condition: p.condition || 'move-in',
+          city: p.city,
+          region: p.region || p.city,
+          postcode: p.postcode || '',
+          country: 'PT',
+          description: p.description || '',
+          tagline: p.tagline || '',
+          latitude: p.latitude ? Number(p.latitude) : null,
+          longitude: p.longitude ? Number(p.longitude) : null,
+          source_url: p.source_url || '',
+          image_urls: imageUrls,
+          features: features,
+          parking: parking,
+          pet_friendly: p.pet_friendly === 'yes' || p.pet_friendly === true,
+          epc_rating: p.epc_rating || null,
+          agent_id: agentId,
+          source: 'bulk-import',
+          listing_status: 'active',
+        })
+        .select()
+        .single();
+
+      if (error) {
+        results.errors.push({ title: p.title, error: error.message });
+      } else {
+        results.inserted++;
+        // Trigger enrichment in background
+        enrichAndSave(data).catch(err => console.error('Enrichment failed for', p.title, err.message));
+        results.enriching++;
+      }
+    } catch (err) {
+      results.errors.push({ title: p.title || 'Unknown', error: err.message });
+    }
+  }
+
+  res.json({
+    message: `Imported ${results.inserted} of ${properties.length} properties. ${results.enriching} queued for AI enrichment.`,
+    ...results,
+  });
+});
+
+// ============================================================
 // ENRICHMENT ENDPOINT (manual trigger)
 // ============================================================
 
