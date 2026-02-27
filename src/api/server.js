@@ -16,7 +16,9 @@ import cors from 'cors';
 import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { scoreProperties, generatePersona } from '../services/ai-scoring.js';
-import { enrichProperty } from '../services/enrichment.js';
+import { enrichWithOSM } from '../services/enrichment-osm.js';
+// Legacy UK-only enrichment (kept as fallback for UK properties with postcodes)
+// import { enrichProperty } from '../services/enrichment.js';
 
 // ============================================================
 // SETUP
@@ -526,7 +528,8 @@ async function getEnrichmentBatch(propertyIds) {
 
 async function enrichAndSave(property) {
   try {
-    const enrichment = await enrichProperty(property);
+    // Use OpenStreetMap enrichment (works globally — PT, IE, UK, anywhere)
+    const enrichment = await enrichWithOSM(property);
     if (!enrichment) return null;
 
     const { error } = await supabase
