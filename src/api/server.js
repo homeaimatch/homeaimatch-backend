@@ -441,6 +441,62 @@ app.post('/api/enrich/:id', async (req, res) => {
   res.json({ enrichment });
 });
 
+// Batch enrich: enrich all properties that don't have enrichment data yet
+app.post('/api/admin/enrich-all', async (req, res) => {
+  try {
+    // Get all properties
+    const { data: allProps } = await supabase
+      .from('properties')
+      .select('id, title, latitude, longitude')
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null);
+
+    if (!allProps || allProps.length === 0) {
+      return res.json({ message: 'No properties with coordinates found', enriched: 0, total: 0 });
+    }
+
+    // Get already enriched property IDs
+    const { data: enriched } = await supabase
+      .from('property_enrichment')
+      .select('property_id');
+    
+    const enrichedIds = new Set((enriched || []).map(e => e.property_id));
+    const unenriched = allProps.filter(p => !enrichedIds.has(p.id));
+
+    if (unenriched.length === 0) {
+      return res.json({ message: 'All properties already enriched', enriched: 0, total: allProps.length, already_enriched: enrichedIds.size });
+    }
+
+    // Return immediately — run enrichment in background
+    res.json({ 
+      message: `Enrichment started for ${unenriched.length} properties. This runs in the background (rate-limited to ~10/min).`,
+      queued: unenriched.length,
+      already_enriched: enrichedIds.size,
+      total: allProps.length
+    });
+
+    // Run in background with rate limiting (6 seconds between requests)
+    for (let i = 0; i < unenriched.length; i++) {
+      const prop = unenriched[i];
+      console.log(`[Enrich ${i + 1}/${unenriched.length}] ${prop.title || prop.id}`);
+      try {
+        await enrichAndSave(prop);
+      } catch (err) {
+        console.error(`  Failed: ${err.message}`);
+      }
+      if (i < unenriched.length - 1) {
+        await new Promise(r => setTimeout(r, 6000));
+      }
+    }
+    console.log(`Batch enrichment complete: ${unenriched.length} properties processed`);
+  } catch (err) {
+    console.error('Batch enrich error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+});
+
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
