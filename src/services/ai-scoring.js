@@ -77,13 +77,18 @@ PROPERTY:
 - EPC rating: ${property.epc_rating || 'Unknown'}
 ${enrichment ? `
 ENRICHMENT DATA:
-- Nearest grocery: ${enrichment.nearest_grocery_m}m (${enrichment.nearest_grocery_name})
-- Nearest station: ${enrichment.nearest_station_m}m
-- Nearest park: ${enrichment.nearest_park_m}m
-- Restaurants within 1km: ${enrichment.restaurant_count_1km}
-- Walk score: ${enrichment.walkability_score}/100
-- Area avg price: £${enrichment.avg_price_area?.toLocaleString()}
-- Price trend (1yr): ${enrichment.price_trend_1yr_pct}%
+- Walkability: ${enrichment.walkability}/10 (${enrichment.walkability_label})
+- Neighbourhood type: ${enrichment.neighborhood_type}
+- Schools rating: ${enrichment.schools} (${enrichment.schools_count_2km} within 2km)
+- Restaurants within 1km: ${enrichment.restaurants_count_1km}
+- Cafes within 1km: ${enrichment.cafes_count_1km}
+- Shops within 1km: ${enrichment.shops_count_1km}
+- Transport stops within 500m: ${enrichment.transport_count_500m}
+- Healthcare within 1km: ${enrichment.healthcare_count_1km}
+- Parks within 1km: ${enrichment.parks_count_1km}
+- Beach nearby: ${enrichment.beach_nearby ? 'Yes — ' + (enrichment.nearest_beach?.name || '') + ' (' + (enrichment.nearest_beach?.distance_km || '?') + ' km)' : 'No'}
+- Nearest airport: ${enrichment.nearest_airport ? enrichment.nearest_airport.name + ' (' + enrichment.nearest_airport.distance_km + ' km)' : 'Unknown'}
+- Sports facilities within 2km: ${enrichment.sports_count_2km}
 ` : ''}
 Score this property for this buyer.`;
 
@@ -196,9 +201,38 @@ function scoreWithRules(profile, property, enrichment) {
     else if (property.commute_city_center <= 40) score += 5;
   }
 
-  // Walkability (8 pts)
-  if (property.walkability >= 8) { score += 8; highlights.push('Very walkable area'); }
-  else if (property.walkability >= 6) score += 5;
+  // Walkability — use OSM enrichment if available, else fallback to property field
+  const walkScore = enrichment?.walkability ?? property.walkability;
+  if (walkScore >= 7) { score += 8; highlights.push(`Walkable area (${walkScore}/10)`); }
+  else if (walkScore >= 5) { score += 5; }
+  else if (walkScore >= 3) { score += 2; }
+  else if (walkScore != null && walkScore < 3) { concerns.push('Car-dependent area'); }
+
+  // Schools — use OSM enrichment
+  const schoolRating = enrichment?.schools || property.schools_quality;
+  if (schoolRating === 'excellent') { score += 5; highlights.push('Excellent schools nearby'); }
+  else if (schoolRating === 'good') { score += 3; highlights.push('Good schools nearby'); }
+
+  // Beach proximity — bonus for coastal lifestyle
+  if (enrichment?.beach_nearby) { score += 3; highlights.push(`Beach nearby (${enrichment.nearest_beach?.distance_km || '?'} km)`); }
+
+  // Shops & restaurants — convenience scoring
+  if (enrichment?.shops_count_1km >= 3 && enrichment?.restaurants_count_1km >= 3) {
+    score += 3; highlights.push('Shops & restaurants nearby');
+  }
+
+  // Transport — important for non-drivers
+  if (enrichment?.transport_count_500m >= 2) { score += 2; }
+
+  // Healthcare
+  if (enrichment?.healthcare_count_1km >= 1) { score += 1; }
+  else if (enrichment?.healthcare_count_1km === 0) { concerns.push('No healthcare within 1km'); }
+
+  // Airport — useful for expats/relocators
+  if (enrichment?.nearest_airport?.distance_km) {
+    if (enrichment.nearest_airport.distance_km <= 30) highlights.push(`${enrichment.nearest_airport.name} airport ${enrichment.nearest_airport.distance_km} km`);
+    else if (enrichment.nearest_airport.distance_km >= 80) concerns.push(`Airport ${enrichment.nearest_airport.distance_km} km away`);
+  }
 
   // Pets (5 pts)
   if (profile.pets !== 'No pets' && property.pet_friendly) { score += 5; highlights.push('Pet-friendly'); }
@@ -207,17 +241,17 @@ function scoreWithRules(profile, property, enrichment) {
   // Outdoor space (5 pts)
   if (profile.outdoor_space === 'Big garden' && property.features?.includes('garden')) { score += 5; highlights.push('Has garden'); }
 
-  // Schools (5 pts)
-  if (property.schools_quality === 'excellent') { score += 5; highlights.push('Excellent schools'); }
+  // Parks from enrichment
+  if (enrichment?.parks_count_1km >= 2) { score += 2; }
 
   // Cap at 100
   score = Math.min(100, Math.max(0, score));
 
   return {
     score,
-    highlights: highlights.slice(0, 3),
-    concerns: concerns.slice(0, 2),
-    reasoning: `Score based on budget fit, commute time, walkability, and lifestyle preferences.`,
+    highlights: highlights.slice(0, 4),
+    concerns: concerns.slice(0, 3),
+    reasoning: `Score based on budget fit, commute, walkability (${walkScore || '?'}/10), neighbourhood amenities, and lifestyle preferences.`,
   };
 }
 

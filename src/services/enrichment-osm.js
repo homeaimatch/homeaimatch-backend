@@ -105,6 +105,11 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     ['amenity', 'place_of_worship'],
   ];
 
+  // Airport search uses a wider radius (50km) — separate query
+  const airportQuery = overpassQuery(lat, lng, 50000, [
+    ['aeroway', 'aerodrome'],
+  ]);
+
   const query = overpassQuery(lat, lng, radiusM, allTags);
 
   const res = await fetch(OVERPASS_URL, {
@@ -119,7 +124,27 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
   }
 
   const data = await res.json();
-  return parseResults(data.elements || [], lat, lng);
+  const amenities = parseResults(data.elements || [], lat, lng);
+
+  // Fetch airports separately (50km radius) — with small delay to be polite
+  let airports = [];
+  try {
+    await new Promise(r => setTimeout(r, 1500));
+    const airRes = await fetch(OVERPASS_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(airportQuery)}`,
+    });
+    if (airRes.ok) {
+      const airData = await airRes.json();
+      airports = parseResults(airData.elements || [], lat, lng)
+        .filter(a => a.name && a.name !== 'Unnamed'); // Only named airports
+    }
+  } catch (e) {
+    console.warn('Airport query failed:', e.message);
+  }
+
+  return { amenities, airports };
 }
 
 // ─── Categorise amenities ───────────────────────────────────────────────────
@@ -238,9 +263,10 @@ export async function enrichWithOSM(property, radiusM = 2000) {
   }
 
   try {
-    const amenities = await fetchNearbyAmenities(latitude, longitude, radiusM);
-    if (!amenities) return null;
+    const result = await fetchNearbyAmenities(latitude, longitude, radiusM);
+    if (!result) return null;
 
+    const { amenities, airports } = result;
     const cats = categorise(amenities);
     const walkScore = calcWalkability(cats);
 
@@ -264,6 +290,8 @@ export async function enrichWithOSM(property, radiusM = 2000) {
       beach_nearby: cats.beaches.length > 0,
       nearest_beach: cats.beaches[0] ? { name: cats.beaches[0].name, distance_km: cats.beaches[0].distance_km } : null,
       sports_count_2km: cats.sports.filter(s => s.distance_km <= 2).length,
+      nearest_airport: airports[0] ? { name: airports[0].name, distance_km: airports[0].distance_km } : null,
+      airports_50km: topN(airports, 3),
       enriched_at: new Date().toISOString(),
       enrichment_source: 'openstreetmap',
     };
