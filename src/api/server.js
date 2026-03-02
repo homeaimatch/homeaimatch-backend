@@ -127,7 +127,7 @@ app.post('/api/match', async (req, res) => {
       persona,
       matches: topMatches.map((m, i) => ({
         rank: i + 1,
-        property: formatProperty(m.property),
+        property: formatProperty(m.property, m.enrichment),
         enrichment: m.enrichment,
         score: m.score?.score || 0,
         highlights: m.score?.highlights || [],
@@ -376,7 +376,7 @@ app.post('/api/admin/bulk-import', async (req, res) => {
         .insert({
           title: p.title,
           price: Number(p.price),
-          currency: 'EUR',
+          currency: p.currency || 'EUR',
           beds: Number(p.beds),
           baths: Number(p.baths) || 1,
           sqm: Number(p.sqm) || null,
@@ -386,17 +386,23 @@ app.post('/api/admin/bulk-import', async (req, res) => {
           condition: p.condition || 'move-in',
           city: p.city,
           region: p.region || p.city,
+          county: p.county || '',
           postcode: p.postcode || '',
-          country: 'PT',
+          country: p.country || 'PT',
           description: p.description || '',
           tagline: p.tagline || '',
           latitude: p.latitude ? Number(p.latitude) : null,
           longitude: p.longitude ? Number(p.longitude) : null,
+          commute_city_center: p.commute_city_center ? Number(p.commute_city_center) : null,
           source_url: p.source_url || '',
           image_urls: imageUrls,
           features: features,
           parking: parking,
-          pet_friendly: p.pet_friendly === 'yes' || p.pet_friendly === true,
+          pet_friendly: p.pet_friendly === 'yes' || p.pet_friendly === true || p.pet_friendly === 'true',
+          nearby_dog_park: p.nearby_dog_park === 'yes' || p.nearby_dog_park === true || p.nearby_dog_park === 'true',
+          walkability: p.walkability ? Number(p.walkability) : null,
+          schools_quality: p.schools_quality || null,
+          neighborhood_vibe: Array.isArray(p.neighborhood_vibe) ? p.neighborhood_vibe : (p.neighborhood_vibe ? p.neighborhood_vibe.split(',').map(v => v.trim()).filter(Boolean) : []),
           epc_rating: p.epc_rating || null,
           agent_id: agentId,
           source: 'bulk-import',
@@ -646,7 +652,9 @@ async function upsertAgent(agentData) {
   return newAgent?.id;
 }
 
-function formatProperty(p) {
+function formatProperty(p, enrichment) {
+  // Merge enrichment data so frontend cards show real data
+  const e = enrichment || {};
   return {
     id: p.id,
     title: p.title,
@@ -666,11 +674,15 @@ function formatProperty(p) {
     postcode: p.postcode,
     country: p.country,
     epc_rating: p.epc_rating,
-    walkability: p.walkability,
-    schools_quality: p.schools_quality,
+    // Use enrichment walkability if available, else property field
+    walkability: e.walkability ?? p.walkability,
+    walkability_label: e.walkability_label || null,
+    // Use enrichment schools if available
+    schools_quality: e.schools || p.schools_quality,
     pet_friendly: p.pet_friendly,
     nearby_dog_park: p.nearby_dog_park,
     neighborhood_vibe: p.neighborhood_vibe,
+    neighborhood_type: e.neighborhood_type || null,
     features: p.features,
     parking: p.parking,
     commute_city_center: p.commute_city_center,
@@ -678,6 +690,20 @@ function formatProperty(p) {
     source_url: p.source_url,
     latitude: p.latitude,
     longitude: p.longitude,
+    // Enrichment-derived amenity data (replaces old hardcoded fields)
+    amenity_groceries_km: e.shops_count_1km > 0 ? Math.round((1 / Math.max(e.shops_count_1km, 1)) * 10) / 10 : p.amenity_groceries_km,
+    amenity_parks_km: e.nearest_park?.distance_km || p.amenity_parks_km,
+    amenity_hospitals_km: e.nearest_healthcare?.[0]?.distance_km || (e.healthcare_count_1km > 0 ? 0.8 : p.amenity_hospitals_km),
+    // New enrichment fields for display
+    shops_count_1km: e.shops_count_1km || 0,
+    restaurants_count_1km: e.restaurants_count_1km || 0,
+    transport_count_500m: e.transport_count_500m || 0,
+    beach_nearby: e.beach_nearby || false,
+    nearest_beach: e.nearest_beach || null,
+    nearest_airport: e.nearest_airport || null,
+    schools_count_2km: e.schools_count_2km || 0,
+    parks_count_1km: e.parks_count_1km || 0,
+    healthcare_count_1km: e.healthcare_count_1km || 0,
     agent: p.agents ? {
       name: p.agents.name,
       initials: p.agents.initials,
