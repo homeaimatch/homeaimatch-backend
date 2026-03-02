@@ -138,7 +138,18 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     if (airRes.ok) {
       const airData = await airRes.json();
       airports = parseResults(airData.elements || [], lat, lng)
-        .filter(a => a.name && a.name !== 'Unnamed'); // Only named airports
+        .filter(a => {
+          if (!a.name || a.name === 'Unnamed') return false;
+          const n = a.name.toLowerCase();
+          // Include if name contains airport/aeroporto/aeropuerto or known commercial airport indicators
+          if (n.includes('airport') || n.includes('aeroporto') || n.includes('aeropuerto') || n.includes('aéroport') || n.includes('flughafen')) return true;
+          // Include if it has international in the name
+          if (n.includes('international') || n.includes('internacional')) return true;
+          // Exclude aerodromes, airfields, helipads, and private strips
+          if (n.includes('aerodrom') || n.includes('aeroclub') || n.includes('aeródromo') || n.includes('airfield') || n.includes('heliport') || n.includes('helipad') || n.includes('ultralight') || n.includes('ultraligeiro') || n.includes('militar')) return false;
+          // If name doesn't clearly indicate airport type, include only if within 60km (likely significant)
+          return a.distance_km <= 60;
+        }); // Only real commercial airports
     }
   } catch (e) {
     console.warn('Airport query failed:', e.message);
