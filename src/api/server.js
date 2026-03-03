@@ -111,11 +111,21 @@ app.post('/api/match', async (req, res) => {
       enrichment: enrichmentMap[p.id] || null,
     }));
 
-    // 4. AI Score all candidates → get top 5
-    const topMatches = await scoreProperties(profile, propertiesWithEnrichment);
+    // 4. Quick rule-based pre-sort (instant, free) → take top 8 for AI scoring
+    const preScored = propertiesWithEnrichment.map(pe => ({
+      ...pe,
+      preScore: quickPreScore(profile, pe.property, pe.enrichment),
+    }));
+    preScored.sort((a, b) => b.preScore - a.preScore);
+    const topCandidates = preScored.slice(0, 8);
 
-    // 5. Generate buyer persona
-    const persona = await generatePersona(profile);
+    console.log(`[Match] Pre-sorted ${candidates.length} → top ${topCandidates.length} for AI scoring`);
+
+    // 5. AI Score top candidates only (parallel) + persona in parallel
+    const [topMatches, persona] = await Promise.all([
+      scoreProperties(profile, topCandidates),
+      generatePersona(profile),
+    ]);
 
     // 6. Save search record
     const searchId = await saveSearch(profile, candidates.length, topMatches);
@@ -449,8 +459,9 @@ app.post('/api/enrich/:id', async (req, res) => {
 
 // Batch enrich: enrich all properties that don't have enrichment data yet
 app.post('/api/admin/enrich-all', async (req, res) => {
+  const { force } = req.body || {};
   try {
-    // Get all properties
+    // Get all properties with coordinates
     const { data: allProps } = await supabase
       .from('properties')
       .select('id, title, latitude, longitude')
@@ -461,40 +472,45 @@ app.post('/api/admin/enrich-all', async (req, res) => {
       return res.json({ message: 'No properties with coordinates found', enriched: 0, total: 0 });
     }
 
-    // Get already enriched property IDs
+    // Get properties with ACTUAL OSM enrichment (not just any enrichment row)
     const { data: enriched } = await supabase
       .from('property_enrichment')
-      .select('property_id');
+      .select('property_id, enrichment_source, walkability')
+      .eq('enrichment_source', 'openstreetmap');
     
     const enrichedIds = new Set((enriched || []).map(e => e.property_id));
-    const unenriched = allProps.filter(p => !enrichedIds.has(p.id));
+    const unenriched = force ? allProps : allProps.filter(p => !enrichedIds.has(p.id));
 
     if (unenriched.length === 0) {
-      return res.json({ message: 'All properties already enriched', enriched: 0, total: allProps.length, already_enriched: enrichedIds.size });
+      return res.json({ message: 'All properties already have OSM enrichment', enriched: 0, total: allProps.length, already_enriched: enrichedIds.size });
     }
 
     // Return immediately — run enrichment in background
     res.json({ 
-      message: `Enrichment started for ${unenriched.length} properties. This runs in the background (rate-limited to ~10/min).`,
+      message: `Enrichment started for ${unenriched.length} properties. Runs in background (~5 per minute, ~${Math.ceil(unenriched.length / 5)} min total).`,
       queued: unenriched.length,
       already_enriched: enrichedIds.size,
       total: allProps.length
     });
 
-    // Run in background with rate limiting (6 seconds between requests)
+    // Run in background with rate limiting
+    // Each property = 2 Overpass queries (amenities + airports) with 1.5s between
+    // Total per property ~4s + 8s pause = ~12s cycle = ~5 per minute
     for (let i = 0; i < unenriched.length; i++) {
       const prop = unenriched[i];
       console.log(`[Enrich ${i + 1}/${unenriched.length}] ${prop.title || prop.id}`);
       try {
         await enrichAndSave(prop);
+        console.log(`  ✅ Done`);
       } catch (err) {
-        console.error(`  Failed: ${err.message}`);
+        console.error(`  ❌ Failed: ${err.message}`);
       }
+      // Wait 8 seconds between properties (polite rate for Overpass)
       if (i < unenriched.length - 1) {
-        await new Promise(r => setTimeout(r, 6000));
+        await new Promise(r => setTimeout(r, 8000));
       }
     }
-    console.log(`Batch enrichment complete: ${unenriched.length} properties processed`);
+    console.log(`✅ Batch enrichment complete: ${unenriched.length} properties processed`);
   } catch (err) {
     console.error('Batch enrich error:', err);
     if (!res.headersSent) {
@@ -506,6 +522,32 @@ app.post('/api/admin/enrich-all', async (req, res) => {
 // ============================================================
 // HELPER FUNCTIONS
 // ============================================================
+
+// Quick rule-based pre-scorer for fast candidate filtering (no API calls)
+function quickPreScore(profile, property, enrichment) {
+  let score = 50;
+  const budgetMap = {
+    'Under €200K': 200000, '€200K-€400K': 400000, '€400K-€600K': 600000,
+    '€600K-€800K': 800000, '€800K+': 1200000,
+    'Under £200K': 200000, '£200K-£400K': 400000, '£400K-£600K': 600000,
+    '£600K-£800K': 800000, '£800K+': 1200000,
+  };
+  const maxBudget = budgetMap[profile.budget_range] || 500000;
+  if (property.price <= maxBudget) score += 15;
+  else if (property.price <= maxBudget * 1.1) score += 5;
+  else score -= 10;
+  if (property.commute_city_center && property.commute_city_center <= 15) score += 10;
+  const walk = enrichment?.walkability ?? property.walkability;
+  if (walk >= 7) score += 8;
+  else if (walk >= 5) score += 4;
+  if (enrichment?.beach_nearby) score += 3;
+  if (enrichment?.schools === 'excellent') score += 4;
+  else if (enrichment?.schools === 'good') score += 2;
+  if (profile.pets !== 'No pets' && property.pet_friendly) score += 5;
+  if (enrichment?.shops_count_1km >= 3) score += 2;
+  if (enrichment?.transport_count_500m >= 2) score += 2;
+  return Math.min(100, Math.max(0, score));
+}
 
 function buildProfile(answers) {
   return {
@@ -583,8 +625,15 @@ async function getEnrichmentBatch(propertyIds) {
     .select('*')
     .in('property_id', propertyIds);
 
+  // If a property has both old (google+gov) and new (openstreetmap) rows,
+  // prefer the openstreetmap one
   const map = {};
-  (data || []).forEach(e => { map[e.property_id] = e; });
+  (data || []).forEach(e => {
+    const existing = map[e.property_id];
+    if (!existing || e.enrichment_source === 'openstreetmap') {
+      map[e.property_id] = e;
+    }
+  });
   return map;
 }
 
