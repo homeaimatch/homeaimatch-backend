@@ -17,6 +17,7 @@ import crypto from 'crypto';
 import { createClient } from '@supabase/supabase-js';
 import { scoreProperties, generatePersona } from '../services/ai-scoring.js';
 import { enrichWithOSM } from '../services/enrichment-osm.js';
+import { fetchAllCasafariProperties, syncToSupabase, deactivateMissing, SILVER_COAST_CONCELHOS } from '../services/casafari-sync.js';
 // Legacy UK-only enrichment (kept as fallback for UK properties with postcodes)
 // import { enrichProperty } from '../services/enrichment.js';
 
@@ -517,6 +518,64 @@ app.post('/api/admin/enrich-all', async (req, res) => {
       res.status(500).json({ error: err.message });
     }
   }
+});
+
+// ============================================================
+// CASAFARI SYNC ENDPOINTS
+// ============================================================
+
+app.post('/api/admin/casafari-sync', async (req, res) => {
+  const token = process.env.CASAFARI_API_TOKEN;
+  if (!token) {
+    return res.status(500).json({ error: 'CASAFARI_API_TOKEN not set in environment variables' });
+  }
+
+  const { locationIds, concelhos } = req.body || {};
+
+  let ids = locationIds || [];
+  if (concelhos && Array.isArray(concelhos)) {
+    ids = concelhos.map(name => SILVER_COAST_CONCELHOS[name.toLowerCase()]).filter(Boolean);
+  }
+  if (ids.length === 0) {
+    ids = [SILVER_COAST_CONCELHOS.lourinha, SILVER_COAST_CONCELHOS.peniche];
+  }
+
+  try {
+    res.json({
+      message: `Casafari sync started for location IDs: ${ids.join(', ')}. Running in background — check Railway logs.`,
+      locationIds: ids,
+      estimated_calls: 'Depends on property count (~1 call per 100 properties)',
+    });
+
+    const { properties, totalCount, callCount } = await fetchAllCasafariProperties({
+      token,
+      locationIds: ids,
+    });
+
+    console.log(`[Casafari Sync] Fetched ${properties.length} properties in ${callCount} API calls`);
+
+    const results = await syncToSupabase(supabase, enrichAndSave, {
+      casafariProperties: properties,
+      upsertAgent,
+    });
+
+    console.log(`[Casafari Sync] Done: ${results.inserted} new, ${results.updated} updated, ${results.skipped} skipped, ${results.errors.length} errors, ${results.enriching} queued for enrichment`);
+
+    if (results.errors.length > 0) {
+      console.log(`[Casafari Sync] Errors:`, results.errors.slice(0, 5));
+    }
+
+    const activeCasafariIds = properties.map(p => String(p.property_id));
+    const deactivated = await deactivateMissing(supabase, activeCasafariIds, ids);
+    console.log(`[Casafari Sync] ${deactivated.deactivated} properties deactivated (no longer active)`);
+
+  } catch (err) {
+    console.error('[Casafari Sync] Error:', err.message);
+  }
+});
+
+app.get('/api/admin/casafari-concelhos', (req, res) => {
+  res.json(SILVER_COAST_CONCELHOS);
 });
 
 // ============================================================
