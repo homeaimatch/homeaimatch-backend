@@ -254,8 +254,12 @@ export async function fetchCasafariProperties({
   const body = {
     search_operations: ['sale'],
     location_ids: locationIds,
-    // Filter: residential only (apartments + houses), exclude plots/commercial/land
-    property_type_groups: ['apartment', 'house'],
+    // Residential only — confirmed by Casafari support (parameter: "types")
+    types: [
+      'apartment', 'studio', 'duplex', 'penthouse',
+      'country_house', 'house', 'palace', 'townhouse',
+      'villa', 'country_estate', 'chalet', 'bungalow', 'family_house',
+    ],
   };
 
   console.log(`[Casafari] Fetching: locations=${locationIds.join(',')}, limit=${limit}, offset=${offset}`);
