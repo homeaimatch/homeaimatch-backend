@@ -508,7 +508,7 @@ app.post('/api/admin/enrich-all', async (req, res) => {
       }
       // Wait 8 seconds between properties (polite rate for Overpass)
       if (i < unenriched.length - 1) {
-        await new Promise(r => setTimeout(r, 8000));
+        await new Promise(r => setTimeout(r, 10000));
       }
     }
     console.log(`✅ Batch enrichment complete: ${unenriched.length} properties processed`);
@@ -559,7 +559,7 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
       upsertAgent,
     });
 
-    console.log(`[Casafari Sync] Done: ${results.inserted} new, ${results.updated} updated, ${results.skipped} skipped, ${results.errors.length} errors, ${results.enriching} queued for enrichment`);
+    console.log(`[Casafari Sync] Done: ${results.inserted} new, ${results.updated} updated, ${results.skipped} skipped, ${results.errors.length} errors`);
 
     if (results.errors.length > 0) {
       console.log(`[Casafari Sync] Errors:`, results.errors.slice(0, 5));
@@ -569,6 +569,42 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
     const deactivated = await deactivateMissing(supabase, activeCasafariIds, ids);
     console.log(`[Casafari Sync] ${deactivated.deactivated} properties deactivated (no longer active)`);
 
+    // Now run enrichment for new properties SEQUENTIALLY (not parallel)
+    // Only enrich properties that don't have OSM data yet
+    if (results.inserted > 0) {
+      console.log(`[Casafari Sync] Starting sequential enrichment for new properties...`);
+      const { data: unenriched } = await supabase
+        .from('properties')
+        .select('id, title, latitude, longitude')
+        .eq('source', 'casafari')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null);
+
+      const { data: alreadyEnriched } = await supabase
+        .from('property_enrichment')
+        .select('property_id')
+        .eq('enrichment_source', 'openstreetmap');
+
+      const enrichedSet = new Set((alreadyEnriched || []).map(e => e.property_id));
+      const toEnrich = (unenriched || []).filter(p => !enrichedSet.has(p.id));
+
+      console.log(`[Casafari Enrich] ${toEnrich.length} properties need OSM enrichment`);
+
+      // Run sequentially with 10 second delay between each
+      for (let i = 0; i < toEnrich.length; i++) {
+        try {
+          console.log(`[Casafari Enrich] ${i + 1}/${toEnrich.length}: ${toEnrich[i].title || toEnrich[i].id}`);
+          await enrichAndSave(toEnrich[i]);
+        } catch (err) {
+          console.error(`[Casafari Enrich] Failed: ${err.message}`);
+        }
+        // 10 second delay between enrichments (each does 2 Overpass queries)
+        if (i < toEnrich.length - 1) {
+          await new Promise(r => setTimeout(r, 10000));
+        }
+      }
+      console.log(`[Casafari Enrich] Sequential enrichment complete`);
+    }
   } catch (err) {
     console.error('[Casafari Sync] Error:', err.message);
   }
