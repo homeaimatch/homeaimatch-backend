@@ -10,7 +10,9 @@ const client = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
-const SYSTEM_PROMPT = `You are homeAImatch, an AI property matching assistant. You score how well a property matches a buyer's lifestyle profile.
+const SYSTEM_PROMPT = `You are homeAImatch, an AI property matching assistant for Portugal and Ireland. You score how well a property matches a buyer's lifestyle profile.
+
+IMPORTANT: Property descriptions may be in Portuguese, English, or other languages. Understand them in any language but ALWAYS respond in English. Use the description to extract useful details about the property (views, renovation status, nearby amenities, etc.) for scoring.
 
 Score the property from 0-100 based on these weighted criteria:
 - Location & Area (20 pts): Does the neighbourhood vibe match? Urban vs suburban vs rural preference?
@@ -60,7 +62,7 @@ BUYER PROFILE:
 
 PROPERTY:
 - Name: ${property.title}
-- Price: £${property.price?.toLocaleString()}
+- Price: €${property.price?.toLocaleString()}
 - Beds: ${property.beds}, Baths: ${property.baths}
 - Size: ${property.sqm}m²
 - Type: ${property.property_type}, Style: ${property.style}

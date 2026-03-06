@@ -436,11 +436,9 @@ export async function syncToSupabase(supabase, enrichAndSave, { casafariProperti
           results.errors.push({ title: mapped.title, error: error.message });
         } else {
           results.inserted++;
-          // Trigger enrichment in background for new properties with coordinates
-          if (inserted.latitude && inserted.longitude && enrichAndSave) {
-            enrichAndSave(inserted).catch(err =>
-              console.error(`Enrichment failed for ${inserted.title}:`, err.message)
-            );
+          // Don't trigger enrichment here — it will be queued after sync completes
+          // to avoid overwhelming OSM Overpass API with parallel requests
+          if (inserted.latitude && inserted.longitude) {
             results.enriching++;
           }
         }
