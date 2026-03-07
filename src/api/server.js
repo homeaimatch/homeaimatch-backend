@@ -530,7 +530,7 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
     return res.status(500).json({ error: 'CASAFARI_API_TOKEN not set in environment variables' });
   }
 
-  const { locationIds, concelhos } = req.body || {};
+  const { locationIds, concelhos, maxCalls } = req.body || {};
 
   let ids = locationIds || [];
   if (concelhos && Array.isArray(concelhos)) {
@@ -550,6 +550,7 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
     const { properties, totalCount, callCount } = await fetchAllCasafariProperties({
       token,
       locationIds: ids,
+      maxCalls: maxCalls || 10,
     });
 
     console.log(`[Casafari Sync] Fetched ${properties.length} properties in ${callCount} API calls`);
@@ -661,6 +662,7 @@ function buildProfile(answers) {
     dealbreakers: answers.dealbreakers || [],
     priorities: answers.priorities || [],
     lifestyle: answers.lifestyle || [],
+    language: answers.language || 'en',
     raw_answers: answers,
   };
 }
@@ -672,7 +674,11 @@ async function getCandidates(profile) {
     .eq('listing_status', 'active');
 
   // Filter by city if specified (case-insensitive)
-  if (profile.city) {
+  // "Silver Coast" = all Portuguese Silver Coast properties (Lourinhã, Peniche, Óbidos, etc.)
+  const SILVER_COAST_CITIES = ['Lourinhã', 'Peniche', 'Óbidos', 'Bombarral', 'Caldas da Rainha', 'Torres Vedras', 'Nazaré', 'Alcobaça', 'Cadaval', 'Mafra'];
+  if (profile.city && profile.city.toLowerCase().includes('silver coast')) {
+    query = query.in('city', SILVER_COAST_CITIES);
+  } else if (profile.city) {
     query = query.ilike('city', profile.city);
   }
 
@@ -1138,19 +1144,36 @@ app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
     const { search } = req.query;
     let query = supabase
       .from('properties')
-      .select('id, title, price, currency, beds, baths, sqm, city, region, county, image_urls, source_url, agent_id')
+      .select('id, title, price, currency, beds, baths, sqm, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
       .order('created_at', { ascending: false })
       .limit(100);
 
     if (search) {
+      // Search properties by title, region, city, county
+      // Also fetch agent/agency matches separately
       query = query.or(`title.ilike.%${search}%,region.ilike.%${search}%,city.ilike.%${search}%,county.ilike.%${search}%`);
     }
 
     const { data, error } = await query;
     if (error) throw error;
 
-    // Filter out properties already owned by this agent
-    const claimable = (data || []).filter(p => p.agent_id !== req.agentId);
+    let claimable = (data || []).filter(p => p.agent_id !== req.agentId);
+
+    // If search term provided, also include properties whose agent/agency matches
+    if (search) {
+      const searchLower = search.toLowerCase();
+      claimable = claimable.filter(p => {
+        const title = (p.title || '').toLowerCase();
+        const city = (p.city || '').toLowerCase();
+        const region = (p.region || '').toLowerCase();
+        const county = (p.county || '').toLowerCase();
+        const agentName = (p.agents?.name || '').toLowerCase();
+        const agencyName = (p.agents?.agency?.name || '').toLowerCase();
+        return title.includes(searchLower) || city.includes(searchLower) || 
+               region.includes(searchLower) || county.includes(searchLower) ||
+               agentName.includes(searchLower) || agencyName.includes(searchLower);
+      });
+    }
 
     res.json({ properties: claimable });
   } catch (err) {
