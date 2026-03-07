@@ -1144,7 +1144,7 @@ app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
     const { search } = req.query;
     let query = supabase
       .from('properties')
-      .select('id, title, price, currency, beds, baths, sqm, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
+      .select('id, title, price, currency, beds, baths, sqm, property_type, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
       .eq('listing_status', 'active')
       .order('created_at', { ascending: false })
       .limit(200);
