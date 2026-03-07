@@ -71,27 +71,27 @@ function guessStyle(type, constructionYear) {
 
 // ─── Extract best contact from listings ──────────────────────────────────────
 function extractContact(listings) {
+  // Casafari doesn't provide individual agent names — only agency names
+  // Check ALL listings to find the best contact info (prefer ones with email)
+  let bestEmail = null;
+  let bestPhone = null;
+  let bestAgency = null;
+
   for (const listing of listings) {
     const c = listing.contacts_info;
-    if (c && (c.phone || c.email)) {
-      return {
-        name: c.name || null,
-        email: c.email || null,
-        phone: c.phone || null,
-        agency: listing.agency || listing.source_name || 'Independent',
-      };
-    }
+    if (!bestAgency) bestAgency = listing.agency || listing.source_name;
+    if (c?.email && c.email.trim()) bestEmail = c.email.trim();
+    if (c?.phone && c.phone.trim() && !bestPhone) bestPhone = c.phone.trim();
+    // Prefer agency from the listing that has an email
+    if (c?.email && c.email.trim()) bestAgency = listing.agency || bestAgency;
   }
-  // Fallback: use first listing's agency
-  if (listings.length > 0) {
-    return {
-      name: null,
-      email: null,
-      phone: null,
-      agency: listings[0].agency || listings[0].source_name || 'Independent',
-    };
-  }
-  return null;
+
+  return {
+    name: null, // Casafari doesn't provide individual agent names
+    email: bestEmail || null,
+    phone: bestPhone || null,
+    agency: bestAgency || 'Independent',
+  };
 }
 
 // ─── Extract best images (prefer thumbnails for reliability) ─────────────────
@@ -380,7 +380,7 @@ export async function syncToSupabase(supabase, enrichAndSave, { casafariProperti
       let agentId = null;
       if (mapped.agent_agency && upsertAgent) {
         agentId = await upsertAgent({
-          name: mapped.agent_name || mapped.agent_agency,
+          name: mapped.agent_name || mapped.agent_agency, // Use agency name as fallback for agent name
           agency: mapped.agent_agency,
           phone: mapped.agent_phone || '',
           email: mapped.agent_email || '',
