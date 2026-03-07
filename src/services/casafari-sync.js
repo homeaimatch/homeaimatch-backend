@@ -362,6 +362,12 @@ export async function syncToSupabase(supabase, enrichAndSave, { casafariProperti
         continue;
       }
 
+      // Skip properties that are not actively for sale
+      if (cp.sale_status !== 'active') {
+        results.skipped++;
+        continue;
+      }
+
       // Skip properties with no price
       if (!cp.sale_price || cp.sale_price <= 0) {
         results.skipped++;
