@@ -155,8 +155,8 @@ export async function generatePersona(profile) {
       max_tokens: 200,
       messages: [{
         role: 'user',
-        content: `Based on this home buyer profile, create a fun 2-sentence buyer persona with an emoji and title.
-Profile: ${profile.family_size}, searching in ${profile.city}, budget ${profile.budget_range}, wants ${profile.outdoor_space} outdoor space, vibe: ${Array.isArray(profile.vibe) ? profile.vibe.join(', ') : (profile.vibe || '')}, priorities: ${Array.isArray(profile.priorities) ? profile.priorities.join(', ') : (profile.priorities || '')}, pets: ${profile.pets}.
+        content: `Based on this home buyer profile, create a fun buyer persona with an emoji and title. Write a 3-4 sentence description that captures their personality, what they're looking for, and what kind of lifestyle they want. Be warm, specific, and paint a vivid picture. Respond in ${profile.language === 'pt' ? 'Portuguese (European/Portugal)' : 'English'}.
+Profile: ${profile.family_size}, searching in ${profile.city}, budget ${profile.budget_range}, wants ${profile.outdoor_space} outdoor space, vibe: ${Array.isArray(profile.vibe) ? profile.vibe.join(', ') : (profile.vibe || '')}, priorities: ${Array.isArray(profile.priorities) ? profile.priorities.join(', ') : (profile.priorities || '')}, pets: ${profile.pets}, work: ${profile.commute_priority || 'not specified'}.
 Return ONLY JSON: { "emoji": "🌿", "title": "The Urban Gardener", "description": "..." }`
       }],
     });

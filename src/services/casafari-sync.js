@@ -285,7 +285,7 @@ export async function fetchCasafariProperties({
  * Fetch ALL properties for given locations (handles pagination)
  * Each page of 100 = 1 API call
  */
-export async function fetchAllCasafariProperties({ token, locationIds }) {
+export async function fetchAllCasafariProperties({ token, locationIds, maxCalls = 10 }) {
   const allProperties = [];
   let offset = 0;
   const limit = 100;
@@ -303,9 +303,9 @@ export async function fetchAllCasafariProperties({ token, locationIds }) {
 
     offset += limit;
 
-    // Safety: max 10 calls per sync (1000 properties)
-    if (callCount >= 10) {
-      console.warn(`[Casafari] Reached max 10 calls, stopping at ${allProperties.length} properties`);
+    // Safety cap
+    if (callCount >= maxCalls) {
+      console.warn(`[Casafari] Reached max ${maxCalls} calls, stopping at ${allProperties.length} properties`);
       break;
     }
 
