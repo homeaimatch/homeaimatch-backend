@@ -1145,21 +1145,16 @@ app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
     let query = supabase
       .from('properties')
       .select('id, title, price, currency, beds, baths, sqm, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
+      .eq('listing_status', 'active')
       .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (search) {
-      // Search properties by title, region, city, county
-      // Also fetch agent/agency matches separately
-      query = query.or(`title.ilike.%${search}%,region.ilike.%${search}%,city.ilike.%${search}%,county.ilike.%${search}%`);
-    }
+      .limit(200);
 
     const { data, error } = await query;
     if (error) throw error;
 
     let claimable = (data || []).filter(p => p.agent_id !== req.agentId);
 
-    // If search term provided, also include properties whose agent/agency matches
+    // Filter by search term across all fields including agent/agency
     if (search) {
       const searchLower = search.toLowerCase();
       claimable = claimable.filter(p => {
@@ -1174,6 +1169,9 @@ app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
                agentName.includes(searchLower) || agencyName.includes(searchLower);
       });
     }
+
+    // Limit results to 50
+    claimable = claimable.slice(0, 50);
 
     res.json({ properties: claimable });
   } catch (err) {
