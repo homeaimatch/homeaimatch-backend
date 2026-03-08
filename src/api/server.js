@@ -1144,6 +1144,52 @@ app.get('/api/agents/dashboard', authAgent, async (req, res) => {
 app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
   try {
     const { search } = req.query;
+    
+    let propertyIds = null;
+    
+    // If searching by agent/agency name, find matching agent_ids first
+    if (search) {
+      // Search agents by name
+      const { data: matchingAgents } = await supabase
+        .from('agents')
+        .select('id, name, agency:agencies(name)')
+        .or(`name.ilike.%${search}%`);
+      
+      // Search agencies by name and get their agents
+      const { data: matchingAgencies } = await supabase
+        .from('agencies')
+        .select('id, name')
+        .ilike('name', `%${search}%`);
+      
+      const agencyIds = (matchingAgencies || []).map(a => a.id);
+      
+      let agentsFromAgencies = [];
+      if (agencyIds.length > 0) {
+        const { data } = await supabase
+          .from('agents')
+          .select('id')
+          .in('agency_id', agencyIds);
+        agentsFromAgencies = data || [];
+      }
+      
+      // Combine all matching agent IDs
+      const allAgentIds = new Set([
+        ...(matchingAgents || []).map(a => a.id),
+        ...agentsFromAgencies.map(a => a.id),
+      ]);
+      
+      // If we found agent matches, get their property IDs
+      if (allAgentIds.size > 0) {
+        const { data: agentProps } = await supabase
+          .from('properties')
+          .select('id')
+          .in('agent_id', [...allAgentIds])
+          .eq('listing_status', 'active');
+        propertyIds = new Set((agentProps || []).map(p => p.id));
+      }
+    }
+
+    // Fetch properties
     let query = supabase
       .from('properties')
       .select('id, title, price, currency, beds, baths, sqm, property_type, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
@@ -1151,25 +1197,32 @@ app.get('/api/agents/unclaimed', authAgent, async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(200);
 
+    // Add text search filter for title/city/region
+    if (search) {
+      query = query.or(`title.ilike.%${search}%,region.ilike.%${search}%,city.ilike.%${search}%,county.ilike.%${search}%`);
+    }
+
     const { data, error } = await query;
     if (error) throw error;
 
     let claimable = (data || []).filter(p => p.agent_id !== req.agentId);
-
-    // Filter by search term across all fields including agent/agency
-    if (search) {
-      const searchLower = search.toLowerCase();
-      claimable = claimable.filter(p => {
-        const title = (p.title || '').toLowerCase();
-        const city = (p.city || '').toLowerCase();
-        const region = (p.region || '').toLowerCase();
-        const county = (p.county || '').toLowerCase();
-        const agentName = (p.agents?.name || '').toLowerCase();
-        const agencyName = (p.agents?.agency?.name || '').toLowerCase();
-        return title.includes(searchLower) || city.includes(searchLower) || 
-               region.includes(searchLower) || county.includes(searchLower) ||
-               agentName.includes(searchLower) || agencyName.includes(searchLower);
-      });
+    
+    // Merge in agent/agency search results (properties found via agent name search)
+    if (propertyIds && propertyIds.size > 0) {
+      // Get properties matching agent/agency that weren't in the text search
+      const existingIds = new Set(claimable.map(p => p.id));
+      const { data: agentMatchProps } = await supabase
+        .from('properties')
+        .select('id, title, price, currency, beds, baths, sqm, property_type, city, region, county, image_urls, source_url, agent_id, agents(name, agency:agencies(name))')
+        .in('id', [...propertyIds])
+        .eq('listing_status', 'active')
+        .limit(100);
+      
+      for (const p of (agentMatchProps || [])) {
+        if (!existingIds.has(p.id) && p.agent_id !== req.agentId) {
+          claimable.push(p);
+        }
+      }
     }
 
     // Limit results to 50
