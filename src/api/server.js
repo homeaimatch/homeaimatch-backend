@@ -566,9 +566,11 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
       console.log(`[Casafari Sync] Errors:`, results.errors.slice(0, 5));
     }
 
-    const activeCasafariIds = properties.map(p => String(p.property_id));
-    const deactivated = await deactivateMissing(supabase, activeCasafariIds, ids);
-    console.log(`[Casafari Sync] ${deactivated.deactivated} properties deactivated (no longer active)`);
+    // DEACTIVATION DISABLED — was incorrectly marking properties from other concelhos as sold
+    // when doing partial syncs. Will re-enable once Casafari confirms the proper incremental sync approach.
+    // const activeCasafariIds = properties.map(p => String(p.property_id));
+    // const deactivated = await deactivateMissing(supabase, activeCasafariIds, ids);
+    console.log(`[Casafari Sync] Deactivation skipped (disabled until full-sync logic implemented)`);
 
     // Now run enrichment for new properties SEQUENTIALLY (not parallel)
     // Only enrich properties that don't have OSM data yet
