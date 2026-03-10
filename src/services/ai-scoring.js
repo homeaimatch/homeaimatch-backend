@@ -10,7 +10,7 @@ const client = process.env.ANTHROPIC_API_KEY
   ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   : null;
 
-const SYSTEM_PROMPT = `You are homeAImatch, an AI property matching assistant for Portugal and Ireland. You score how well a property matches a buyer's lifestyle profile.
+const SYSTEM_PROMPT_EN = `You are homeAImatch, an AI property matching assistant for Portugal and Ireland. You score how well a property matches a buyer's lifestyle profile.
 
 IMPORTANT: Property descriptions may be in Portuguese, English, or other languages. Understand them in any language but ALWAYS respond in English. Use the description to extract useful details about the property (views, renovation status, nearby amenities, etc.) for scoring.
 
@@ -32,6 +32,30 @@ Return ONLY a JSON object (no markdown, no backticks):
   "highlights": ["15 min walk to city centre", "Large garden for the dog", "Excellent schools nearby"],
   "concerns": ["Slightly above budget", "No garage for EV charging"],
   "reasoning": "A strong match for a family wanting walkability and green space. The Edwardian character fits their 'charming' vibe preference, and Didsbury's village feel scores high on their family-friendly priority."
+}`;
+
+const SYSTEM_PROMPT_PT = `Você é o homeAImatch, um assistente de IA para correspondência de imóveis em Portugal e Irlanda. Avalia o quão bem um imóvel corresponde ao perfil de estilo de vida de um comprador.
+
+IMPORTANTE: As descrições dos imóveis podem estar em Português, Inglês ou outros idiomas. Compreenda-as em qualquer idioma mas RESPONDA SEMPRE em Português de Portugal. Use a descrição para extrair detalhes úteis sobre o imóvel (vistas, estado de renovação, comodidades próximas, etc.) para a avaliação.
+
+Avalie o imóvel de 0-100 com base nestes critérios ponderados:
+- Localização (20 pts): A zona corresponde? Urbano vs suburbano vs rural?
+- Orçamento (20 pts): O preço está dentro do intervalo? Abaixo do orçamento = bónus.
+- Deslocação (15 pts): Quão perto da prioridade de deslocação? Menos de 20 min = excelente.
+- Espaço (10 pts): Quartos suficientes? Jardim se querem espaço exterior?
+- Condição (10 pts): Pronto a habitar ou renovação corresponde à preferência?
+- Estilo de vida (8 pts): Caminhabilidade, restaurantes, ginásio.
+- Ambiente (7 pts): A sensação do bairro corresponde?
+- Animais (5 pts): Aceita animais? Parque canino perto?
+- Estacionamento (3 pts): Corresponde às necessidades?
+- Estilo (2 pts): Bónus para estilo arquitectónico preferido.
+
+Devolve APENAS um objecto JSON (sem markdown, sem backticks):
+{
+  "score": 82,
+  "highlights": ["15 min a pé do centro", "Jardim grande para o cão", "Escolas excelentes perto"],
+  "concerns": ["Ligeiramente acima do orçamento", "Sem garagem"],
+  "reasoning": "Uma excelente correspondência para uma família que valoriza caminhabilidade e espaços verdes."
 }`;
 
 /**
@@ -98,7 +122,7 @@ Score this property for this buyer.`;
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 500,
-      system: SYSTEM_PROMPT,
+      system: buyerProfile.language === 'pt' ? SYSTEM_PROMPT_PT : SYSTEM_PROMPT_EN,
       messages: [{ role: 'user', content: prompt }],
     });
 
@@ -176,6 +200,7 @@ function scoreWithRules(profile, property, enrichment) {
   let score = 50; // baseline
   const highlights = [];
   const concerns = [];
+  const pt = profile.language === 'pt';
 
   // Budget fit (20 pts)
   const budgetMap = {
@@ -187,40 +212,40 @@ function scoreWithRules(profile, property, enrichment) {
   const maxBudget = budgetMap[profile.budget_range] || 500000;
   if (property.price <= maxBudget) {
     score += 15;
-    if (property.price <= maxBudget * 0.85) highlights.push('Well within budget');
+    if (property.price <= maxBudget * 0.85) highlights.push(pt ? 'Bem dentro do orçamento' : 'Well within budget');
   } else if (property.price <= maxBudget * 1.1) {
     score += 5;
-    concerns.push('Slightly above budget');
+    concerns.push(pt ? 'Ligeiramente acima do orçamento' : 'Slightly above budget');
   } else {
     score -= 10;
-    concerns.push('Above budget');
+    concerns.push(pt ? 'Acima do orçamento' : 'Above budget');
   }
 
   // Commute (15 pts)
   if (property.commute_city_center) {
-    if (property.commute_city_center <= 15) { score += 15; highlights.push(`${property.commute_city_center} min commute`); }
+    if (property.commute_city_center <= 15) { score += 15; highlights.push(pt ? `${property.commute_city_center} min do centro` : `${property.commute_city_center} min commute`); }
     else if (property.commute_city_center <= 25) score += 10;
     else if (property.commute_city_center <= 40) score += 5;
   }
 
   // Walkability — use OSM enrichment if available, else fallback to property field
   const walkScore = enrichment?.walkability ?? property.walkability;
-  if (walkScore >= 7) { score += 8; highlights.push(`Walkable area (${walkScore}/10)`); }
+  if (walkScore >= 7) { score += 8; highlights.push(pt ? `Zona caminhável (${walkScore}/10)` : `Walkable area (${walkScore}/10)`); }
   else if (walkScore >= 5) { score += 5; }
   else if (walkScore >= 3) { score += 2; }
-  else if (walkScore != null && walkScore < 3) { concerns.push('Car-dependent area'); }
+  else if (walkScore != null && walkScore < 3) { concerns.push(pt ? 'Zona dependente de carro' : 'Car-dependent area'); }
 
   // Schools — use OSM enrichment
   const schoolRating = enrichment?.schools || property.schools_quality;
-  if (schoolRating === 'excellent') { score += 5; highlights.push('Excellent schools nearby'); }
-  else if (schoolRating === 'good') { score += 3; highlights.push('Good schools nearby'); }
+  if (schoolRating === 'excellent') { score += 5; highlights.push(pt ? 'Escolas excelentes perto' : 'Excellent schools nearby'); }
+  else if (schoolRating === 'good') { score += 3; highlights.push(pt ? 'Boas escolas perto' : 'Good schools nearby'); }
 
   // Beach proximity — bonus for coastal lifestyle
-  if (enrichment?.beach_nearby) { score += 3; highlights.push(`Beach nearby (${enrichment.nearest_beach?.distance_km || '?'} km)`); }
+  if (enrichment?.beach_nearby) { score += 3; highlights.push(pt ? `Praia perto (${enrichment.nearest_beach?.distance_km || '?'} km)` : `Beach nearby (${enrichment.nearest_beach?.distance_km || '?'} km)`); }
 
   // Shops & restaurants — convenience scoring
   if (enrichment?.shops_count_1km >= 3 && enrichment?.restaurants_count_1km >= 3) {
-    score += 3; highlights.push('Shops & restaurants nearby');
+    score += 3; highlights.push(pt ? 'Lojas e restaurantes perto' : 'Shops & restaurants nearby');
   }
 
   // Transport — important for non-drivers
@@ -228,20 +253,20 @@ function scoreWithRules(profile, property, enrichment) {
 
   // Healthcare
   if (enrichment?.healthcare_count_1km >= 1) { score += 1; }
-  else if (enrichment?.healthcare_count_1km === 0) { concerns.push('No healthcare within 1km'); }
+  else if (enrichment?.healthcare_count_1km === 0) { concerns.push(pt ? 'Sem saúde a menos de 1km' : 'No healthcare within 1km'); }
 
   // Airport — useful for expats/relocators
   if (enrichment?.nearest_airport?.distance_km) {
-    if (enrichment.nearest_airport.distance_km <= 30) highlights.push(`${enrichment.nearest_airport.name} airport ${enrichment.nearest_airport.distance_km} km`);
-    else if (enrichment.nearest_airport.distance_km >= 80) concerns.push(`Airport ${enrichment.nearest_airport.distance_km} km away`);
+    if (enrichment.nearest_airport.distance_km <= 30) highlights.push(pt ? `Aeroporto ${enrichment.nearest_airport.name} a ${enrichment.nearest_airport.distance_km} km` : `${enrichment.nearest_airport.name} airport ${enrichment.nearest_airport.distance_km} km`);
+    else if (enrichment.nearest_airport.distance_km >= 80) concerns.push(pt ? `Aeroporto a ${enrichment.nearest_airport.distance_km} km` : `Airport ${enrichment.nearest_airport.distance_km} km away`);
   }
 
   // Pets (5 pts)
-  if (profile.pets !== 'No pets' && property.pet_friendly) { score += 5; highlights.push('Pet-friendly'); }
-  if (profile.pets !== 'No pets' && !property.pet_friendly) concerns.push('Not pet-friendly');
+  if (profile.pets !== 'No pets' && property.pet_friendly) { score += 5; highlights.push(pt ? 'Aceita animais' : 'Pet-friendly'); }
+  if (profile.pets !== 'No pets' && !property.pet_friendly) concerns.push(pt ? 'Não aceita animais' : 'Not pet-friendly');
 
   // Outdoor space (5 pts)
-  if (profile.outdoor_space === 'Big garden' && property.features?.includes('garden')) { score += 5; highlights.push('Has garden'); }
+  if (profile.outdoor_space === 'Big garden' && property.features?.includes('garden')) { score += 5; highlights.push(pt ? 'Tem jardim' : 'Has garden'); }
 
   // Parks from enrichment
   if (enrichment?.parks_count_1km >= 2) { score += 2; }
@@ -253,7 +278,9 @@ function scoreWithRules(profile, property, enrichment) {
     score,
     highlights: highlights.slice(0, 4),
     concerns: concerns.slice(0, 3),
-    reasoning: `Score based on budget fit, commute, walkability (${walkScore || '?'}/10), neighbourhood amenities, and lifestyle preferences.`,
+    reasoning: pt
+      ? `Pontuação baseada em orçamento, deslocação, caminhabilidade (${walkScore || '?'}/10), comodidades do bairro e preferências de estilo de vida.`
+      : `Score based on budget fit, commute, walkability (${walkScore || '?'}/10), neighbourhood amenities, and lifestyle preferences.`,
   };
 }
 
