@@ -1430,6 +1430,171 @@ app.delete('/api/agents/properties/:id', authAgent, async (req, res) => {
 });
 
 // ============================================================
+// PASSWORD MANAGEMENT
+// ============================================================
+
+// Change password (logged-in agent)
+app.post('/api/agents/change-password', authAgent, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body;
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+
+    // Get current password hash
+    const { data: agent } = await supabase
+      .from('agents')
+      .select('password_hash')
+      .eq('id', req.agentId)
+      .single();
+
+    if (!agent || !verifyPassword(current_password, agent.password_hash)) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    // Update password
+    await supabase
+      .from('agents')
+      .update({ password_hash: hashPassword(new_password) })
+      .eq('id', req.agentId);
+
+    res.json({ success: true, message: 'Password changed successfully' });
+  } catch (err) {
+    console.error('Change password error:', err.message);
+    res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// Forgot password — send reset link
+app.post('/api/agents/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    // Always return success to prevent email enumeration
+    const successMsg = 'If that email exists, a reset link has been sent.';
+
+    if (!email) return res.json({ message: successMsg });
+
+    const { data: agent } = await supabase
+      .from('agents')
+      .select('id, name, email')
+      .eq('email', email.toLowerCase().trim())
+      .single();
+
+    if (!agent) {
+      // Don't reveal that the email doesn't exist
+      return res.json({ message: successMsg });
+    }
+
+    // Generate reset token (expires in 1 hour)
+    const resetToken = generateToken();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+
+    // Store reset token in agent_sessions with a special type
+    await supabase.from('agent_sessions').insert({
+      agent_id: agent.id,
+      token: 'reset_' + resetToken,
+      expires_at: expiresAt,
+    });
+
+    // Build reset link
+    const resetLink = `https://homeaimatch.com/agent-dashboard.html#reset_token=${resetToken}`;
+
+    // Send email via Resend or Formspree
+    // For now, log it (replace with actual email sending)
+    console.log(`[Password Reset] Agent: ${agent.email}, Link: ${resetLink}`);
+
+    // Try to send via a simple email endpoint if available
+    try {
+      // If you have Resend configured:
+      if (process.env.RESEND_API_KEY) {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: 'homeAImatch <noreply@homeaimatch.com>',
+            to: agent.email,
+            subject: 'Reset your homeAImatch password',
+            html: `
+              <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px">
+                <h2 style="color:#1a2b3c">Reset your password</h2>
+                <p>Hi ${agent.name},</p>
+                <p>You requested a password reset for your homeAImatch agent account. Click the button below to set a new password:</p>
+                <a href="${resetLink}" style="display:inline-block;background:#1e96d1;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;margin:16px 0">Reset Password</a>
+                <p style="color:#6b7b8d;font-size:13px">This link expires in 1 hour. If you didn't request this, you can safely ignore this email.</p>
+                <p style="color:#6b7b8d;font-size:12px;margin-top:24px">— homeAImatch team</p>
+              </div>
+            `,
+          }),
+        });
+        console.log(`[Password Reset] Email sent to ${agent.email}`);
+      } else {
+        console.log(`[Password Reset] RESEND_API_KEY not set. Reset link logged above.`);
+      }
+    } catch (emailErr) {
+      console.error('[Password Reset] Email send failed:', emailErr.message);
+    }
+
+    res.json({ message: successMsg });
+  } catch (err) {
+    console.error('Forgot password error:', err.message);
+    res.json({ message: 'If that email exists, a reset link has been sent.' });
+  }
+});
+
+// Reset password with token
+app.post('/api/agents/reset-password', async (req, res) => {
+  try {
+    const { token, new_password } = req.body;
+    if (!token || !new_password) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+
+    // Find the reset session
+    const { data: session } = await supabase
+      .from('agent_sessions')
+      .select('agent_id, expires_at')
+      .eq('token', 'reset_' + token)
+      .single();
+
+    if (!session || new Date(session.expires_at) < new Date()) {
+      return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+    }
+
+    // Update password
+    await supabase
+      .from('agents')
+      .update({ password_hash: hashPassword(new_password) })
+      .eq('id', session.agent_id);
+
+    // Delete the reset token so it can't be reused
+    await supabase
+      .from('agent_sessions')
+      .delete()
+      .eq('token', 'reset_' + token);
+
+    // Also invalidate all existing sessions for this agent (force re-login)
+    await supabase
+      .from('agent_sessions')
+      .delete()
+      .eq('agent_id', session.agent_id);
+
+    res.json({ success: true, message: 'Password updated. Please sign in with your new password.' });
+  } catch (err) {
+    console.error('Reset password error:', err.message);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// ============================================================
 // START SERVER
 // ============================================================
 
