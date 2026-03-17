@@ -813,15 +813,16 @@ async function getCandidates(profile) {
     .select('*, agents(name, initials, phone, agency:agencies(name))')
     .eq('listing_status', 'active');
 
-  // Silver Coast = all Portuguese Silver Coast properties
-  const SILVER_COAST_CITIES = ['Lourinhã', 'Peniche', 'Óbidos', 'Bombarral', 'Caldas da Rainha', 'Torres Vedras', 'Nazaré', 'Alcobaça', 'Cadaval', 'Mafra'];
-  if (profile.city && profile.city.toLowerCase().includes('silver coast')) {
-    query = query.in('city', SILVER_COAST_CITIES);
-  } else if (profile.city) {
-    query = query.ilike('city', profile.city);
+  // If specific concelhos selected, filter by them
+  const selectedConcelhos = profile.raw_answers?.concelhos;
+  if (selectedConcelhos && Array.isArray(selectedConcelhos) && selectedConcelhos.length > 0) {
+    // Strip emoji prefix from concelho names
+    const cleanNames = selectedConcelhos.map(c => c.replace(/^[^\w]*/, '').trim());
+    query = query.in('city', cleanNames);
   }
+  // Otherwise: no city filter — include ALL active Silver Coast properties
 
-  // Budget filter with 20% buffer (let AI handle nuance)
+  // Budget filter with 20% buffer
   const budgetMin = Math.max(0, (profile.budget_min || 0) * 0.8);
   const budgetMax = (profile.budget_max || 9999999) * 1.2;
   query = query.gte('price', budgetMin).lte('price', budgetMax);
@@ -836,7 +837,7 @@ async function getCandidates(profile) {
     query = query.gte('sqm', Math.round(profile.min_sqm * 0.8));
   }
 
-  // Condition filter (exclude clearly wrong matches)
+  // Condition filter
   const condStr = (profile.property_condition || '').toLowerCase();
   if (condStr.includes('new build') || condStr.includes('nova')) {
     query = query.neq('condition', 'renovation-major');
@@ -844,7 +845,7 @@ async function getCandidates(profile) {
     query = query.neq('condition', 'move-in');
   }
 
-  // Fetch with pagination for Supabase free tier
+  // Fetch with pagination
   const { data: page1, error: err1 } = await query.range(0, 999);
   if (err1) {
     console.error('Candidate query error:', err1);
@@ -859,7 +860,13 @@ async function getCandidates(profile) {
     }
   }
 
-  console.log(`[getCandidates] ${allCandidates.length} candidates (budget: €${Math.round(budgetMin/1000)}K-€${Math.round(budgetMax/1000)}K, beds>=${profile.min_beds || 1}, sqm>=${profile.min_sqm || 'any'})`);
+  // Shuffle candidates to avoid insertion-order bias (Lourinhã always first)
+  for (let i = allCandidates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [allCandidates[i], allCandidates[j]] = [allCandidates[j], allCandidates[i]];
+  }
+
+  console.log(`[getCandidates] ${allCandidates.length} candidates (budget: €${Math.round(budgetMin/1000)}K-€${Math.round(budgetMax/1000)}K, beds>=${profile.min_beds || 1}, sqm>=${profile.min_sqm || 'any'}${selectedConcelhos ? ', concelhos: ' + selectedConcelhos.join(',') : ''})`);
   return allCandidates;
 }
 
