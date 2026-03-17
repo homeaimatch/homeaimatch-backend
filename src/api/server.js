@@ -753,7 +753,6 @@ function quickPreScore(profile, property, enrichment) {
   // Neighbourhood vibe match (+6 max)
   const vibes = (profile.vibe || []).map(v => v.toLowerCase());
   const pVibes = (property.neighborhood_vibe || []).map(v => v.toLowerCase());
-  const desc = (property.description || '').toLowerCase();
   let vibeHits = 0;
   vibes.forEach(v => {
     if (v.includes('family') || v.includes('familiar')) { if (pVibes.some(pv => pv.includes('family')) || desc.includes('familiar') || desc.includes('family') || desc.includes('tranquil')) vibeHits++; }
