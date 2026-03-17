@@ -323,11 +323,11 @@ app.get('/api/admin/contact-messages', async (req, res) => {
 app.get('/api/admin/stats', async (req, res) => {
   try {
     const [properties, agents, leads, subscribers, contacts] = await Promise.all([
-      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id', { count: 'exact' }),
-      supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }),
-      supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }),
-      supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }),
-      supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }),
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id', { count: 'exact' }).limit(50000),
+      supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }).limit(50000),
+      supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }).limit(50000),
+      supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }).limit(50000),
+      supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }).limit(50000),
     ]);
 
     res.json({
@@ -467,7 +467,8 @@ app.post('/api/admin/enrich-all', async (req, res) => {
       .from('properties')
       .select('id, title, latitude, longitude')
       .not('latitude', 'is', null)
-      .not('longitude', 'is', null);
+      .not('longitude', 'is', null)
+      .limit(50000);
 
     if (!allProps || allProps.length === 0) {
       return res.json({ message: 'No properties with coordinates found', enriched: 0, total: 0 });
@@ -477,7 +478,8 @@ app.post('/api/admin/enrich-all', async (req, res) => {
     const { data: enriched } = await supabase
       .from('property_enrichment')
       .select('property_id, enrichment_source, walkability')
-      .eq('enrichment_source', 'openstreetmap');
+      .eq('enrichment_source', 'openstreetmap')
+      .limit(50000);
     
     const enrichedIds = new Set((enriched || []).map(e => e.property_id));
     const unenriched = force ? allProps : allProps.filter(p => !enrichedIds.has(p.id));
@@ -581,12 +583,14 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
         .select('id, title, latitude, longitude')
         .eq('source', 'casafari')
         .not('latitude', 'is', null)
-        .not('longitude', 'is', null);
+        .not('longitude', 'is', null)
+        .limit(50000);
 
       const { data: alreadyEnriched } = await supabase
         .from('property_enrichment')
         .select('property_id')
-        .eq('enrichment_source', 'openstreetmap');
+        .eq('enrichment_source', 'openstreetmap')
+        .limit(50000);
 
       const enrichedSet = new Set((alreadyEnriched || []).map(e => e.property_id));
       const toEnrich = (unenriched || []).filter(p => !enrichedSet.has(p.id));
