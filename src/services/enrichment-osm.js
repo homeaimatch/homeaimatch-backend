@@ -76,6 +76,8 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     ['amenity', 'restaurant'],
     ['amenity', 'cafe'],
     ['amenity', 'bar'],
+    ['amenity', 'pub'],
+    ['amenity', 'nightclub'],
     ['amenity', 'fast_food'],
     // Shopping
     ['shop', 'supermarket'],
@@ -87,6 +89,8 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     ['railway', 'station'],
     ['railway', 'halt'],
     ['amenity', 'ferry_terminal'],
+    ['amenity', 'bicycle_rental'],
+    ['amenity', 'bicycle_parking'],
     // Health
     ['amenity', 'pharmacy'],
     ['amenity', 'hospital'],
@@ -97,12 +101,20 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     ['leisure', 'playground'],
     ['leisure', 'sports_centre'],
     ['leisure', 'swimming_pool'],
+    ['leisure', 'fitness_centre'],
     ['natural', 'beach'],
+    // Tourism & culture (for historic/artsy vibe)
+    ['tourism', 'museum'],
+    ['tourism', 'attraction'],
+    ['tourism', 'gallery'],
+    ['historic', 'castle'],
+    ['historic', 'monument'],
     // Other useful
     ['amenity', 'bank'],
     ['amenity', 'post_office'],
     ['amenity', 'library'],
     ['amenity', 'place_of_worship'],
+    ['amenity', 'marketplace'],
   ];
 
   // Airport search uses a wider radius (50km) — separate query
@@ -164,12 +176,15 @@ function categorise(amenities) {
     schools: [],
     restaurants: [],
     cafes: [],
+    bars: [],
     shops: [],
     transport: [],
+    cycling: [],
     healthcare: [],
     parks: [],
     beaches: [],
     sports: [],
+    tourism: [],
     other: [],
   };
 
@@ -177,13 +192,16 @@ function categorise(amenities) {
     const t = a.type;
     if (['school', 'kindergarten', 'university', 'college'].includes(t)) cats.schools.push(a);
     else if (['restaurant', 'fast_food'].includes(t)) cats.restaurants.push(a);
-    else if (['cafe', 'bar'].includes(t)) cats.cafes.push(a);
-    else if (['supermarket', 'convenience', 'bakery'].includes(t)) cats.shops.push(a);
+    else if (['cafe'].includes(t)) cats.cafes.push(a);
+    else if (['bar', 'pub', 'nightclub'].includes(t)) cats.bars.push(a);
+    else if (['supermarket', 'convenience', 'bakery', 'marketplace'].includes(t)) cats.shops.push(a);
     else if (['bus_station', 'bus_stop', 'station', 'halt', 'ferry_terminal'].includes(t)) cats.transport.push(a);
+    else if (['bicycle_rental', 'bicycle_parking'].includes(t)) cats.cycling.push(a);
     else if (['pharmacy', 'hospital', 'clinic', 'doctors'].includes(t)) cats.healthcare.push(a);
     else if (['park', 'playground'].includes(t)) cats.parks.push(a);
     else if (t === 'beach') cats.beaches.push(a);
-    else if (['sports_centre', 'swimming_pool'].includes(t)) cats.sports.push(a);
+    else if (['sports_centre', 'swimming_pool', 'fitness_centre'].includes(t)) cats.sports.push(a);
+    else if (['museum', 'attraction', 'gallery', 'castle', 'monument'].includes(t)) cats.tourism.push(a);
     else cats.other.push(a);
   }
 
@@ -256,6 +274,45 @@ function topN(arr, n = 3) {
   }));
 }
 
+// ─── Compute neighbourhood vibe from amenity data ─────────────────────────
+function computeVibe(cats, walkScore) {
+  const vibes = [];
+
+  // Family-friendly: schools + parks + playgrounds + low bar count
+  const schoolsNear = cats.schools.filter(s => s.distance_km <= 1.5).length;
+  const parksNear = cats.parks.filter(p => p.distance_km <= 1).length;
+  const playgrounds = cats.parks.filter(p => p.type === 'playground' && p.distance_km <= 1).length;
+  if (schoolsNear >= 2 && parksNear >= 1) vibes.push('family-friendly');
+
+  // Nightlife: bars + restaurants in high density
+  const barsNear = cats.bars.filter(b => b.distance_km <= 1).length;
+  const restaurantsNear = cats.restaurants.filter(r => r.distance_km <= 1).length;
+  if (barsNear >= 3 || (barsNear >= 1 && restaurantsNear >= 5)) vibes.push('nightlife');
+
+  // Artsy/creative: museums, galleries, cultural attractions
+  const tourismNear = cats.tourism.filter(t => t.distance_km <= 2).length;
+  if (tourismNear >= 2) vibes.push('artsy');
+
+  // Quiet/peaceful: low density, rural or suburban
+  const totalNear = cats.restaurants.filter(r => r.distance_km <= 0.5).length +
+    cats.shops.filter(s => s.distance_km <= 0.5).length +
+    cats.bars.filter(b => b.distance_km <= 0.5).length;
+  if (totalNear <= 2 && walkScore <= 4) vibes.push('quiet');
+
+  // Close to nature: parks, beaches, rural
+  if (parksNear >= 2 || cats.beaches.length > 0 || walkScore <= 3) vibes.push('nature-lovers');
+
+  // Surf/laid-back: beach nearby + not too urban
+  if (cats.beaches.length > 0 && walkScore <= 7) vibes.push('surf');
+
+  // Upscale: harder to detect from OSM alone, skip for now
+
+  // Local community: small village feel — some amenities but not a lot
+  if (walkScore >= 3 && walkScore <= 6 && cats.shops.filter(s => s.distance_km <= 0.5).length >= 1 && totalNear <= 8) vibes.push('local-community');
+
+  return vibes;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  PUBLIC API
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -291,9 +348,11 @@ export async function enrichWithOSM(property, radiusM = 2000) {
       schools_count_2km: cats.schools.filter(s => s.distance_km <= 2).length,
       restaurants_count_1km: cats.restaurants.filter(r => r.distance_km <= 1).length,
       cafes_count_1km: cats.cafes.filter(c => c.distance_km <= 1).length,
+      bars_count_1km: cats.bars.filter(b => b.distance_km <= 1).length,
       shops_count_1km: cats.shops.filter(s => s.distance_km <= 1).length,
       transport_count_500m: cats.transport.filter(t => t.distance_km <= 0.5).length,
       nearest_transport: topN(cats.transport, 3),
+      cycling_count_500m: cats.cycling.filter(c => c.distance_km <= 0.5).length,
       healthcare_count_1km: cats.healthcare.filter(h => h.distance_km <= 1).length,
       nearest_healthcare: topN(cats.healthcare, 2),
       parks_count_1km: cats.parks.filter(p => p.distance_km <= 1).length,
@@ -301,8 +360,11 @@ export async function enrichWithOSM(property, radiusM = 2000) {
       beach_nearby: cats.beaches.length > 0,
       nearest_beach: cats.beaches[0] ? { name: cats.beaches[0].name, distance_km: cats.beaches[0].distance_km } : null,
       sports_count_2km: cats.sports.filter(s => s.distance_km <= 2).length,
+      tourism_count_2km: cats.tourism.filter(t => t.distance_km <= 2).length,
       nearest_airport: airports[0] ? { name: airports[0].name, distance_km: airports[0].distance_km } : null,
       airports_50km: topN(airports, 3),
+      // Computed neighbourhood vibe tags based on surrounding amenities
+      computed_vibe: computeVibe(cats, walkScore),
       enriched_at: new Date().toISOString(),
       enrichment_source: 'openstreetmap',
     };
