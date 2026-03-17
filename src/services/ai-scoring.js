@@ -71,18 +71,20 @@ export async function scoreWithAI(buyerProfile, property, enrichment) {
 
   const prompt = `
 BUYER PROFILE:
-- City: ${buyerProfile.city}
-- Budget: ${buyerProfile.budget_range}
-- Family: ${buyerProfile.family_size}
-- Commute priority: ${buyerProfile.commute_priority}
-- Property condition: ${buyerProfile.property_condition}
-- Outdoor space: ${buyerProfile.outdoor_space}
-- Vibe preferences: ${toArr(buyerProfile.vibe).join(', ')}
-- Pets: ${buyerProfile.pets}
-- Parking needs: ${buyerProfile.parking}
-- Dealbreakers: ${toArr(buyerProfile.dealbreakers).join(', ')}
-- Priorities: ${toArr(buyerProfile.priorities).join(', ')}
-- Lifestyle: ${toArr(buyerProfile.lifestyle).join(', ')}
+- Buyer type: ${buyerProfile.buyer_type || 'Not specified'}
+- Transport: ${buyerProfile.transport || 'Not specified'}
+- Budget: €${(buyerProfile.budget_min || 0).toLocaleString()} – €${(buyerProfile.budget_max || 0).toLocaleString()}
+- Min bedrooms: ${buyerProfile.min_beds || 'Any'}
+- Min bathrooms: ${buyerProfile.min_baths || 'Any'}
+- Min size: ${buyerProfile.min_sqm || 'Any'} m²
+- Property condition: ${buyerProfile.property_condition || 'Any'}
+- Outdoor space: ${buyerProfile.outdoor_space || 'Not specified'}
+- Required features: ${toArr(buyerProfile.features).join(', ') || 'None specified'}
+- Area preference: ${buyerProfile.setting || 'Flexible'}
+- Daily priorities: ${toArr(buyerProfile.priorities).join(', ') || 'None specified'}
+- Pets: ${buyerProfile.pets || 'None'}
+- Parking: ${buyerProfile.parking || 'Not specified'}
+- Purpose: ${buyerProfile.purpose || 'Not specified'}
 
 PROPERTY:
 - Name: ${property.title}
@@ -92,20 +94,15 @@ PROPERTY:
 - Type: ${property.property_type}, Style: ${property.style}
 - Condition: ${property.condition}
 - City: ${property.city}, Area: ${property.region}
-- Walkability: ${property.walkability}/10
-- Schools: ${property.schools_quality}
+- Features: ${toArr(property.features).join(', ')}
 - Parking: ${toArr(property.parking).join(', ')}
 - Pet-friendly: ${property.pet_friendly}
-- Dog park nearby: ${property.nearby_dog_park}
-- Neighbourhood vibe: ${toArr(property.neighborhood_vibe).join(', ')}
-- Features: ${toArr(property.features).join(', ')}
-- Commute to city centre: ${property.commute_city_center} min
-- EPC rating: ${property.epc_rating || 'Unknown'}
+- Description: ${(property.description || '').slice(0, 300)}
 ${enrichment ? `
-ENRICHMENT DATA:
+ENRICHMENT DATA (from surroundings analysis):
 - Walkability: ${enrichment.walkability}/10 (${enrichment.walkability_label})
 - Neighbourhood type: ${enrichment.neighborhood_type}
-- Schools rating: ${enrichment.schools} (${enrichment.schools_count_2km} within 2km)
+- Schools: ${enrichment.schools} (${enrichment.schools_count_2km} within 2km)
 - Restaurants within 1km: ${enrichment.restaurants_count_1km}
 - Cafes within 1km: ${enrichment.cafes_count_1km}
 - Shops within 1km: ${enrichment.shops_count_1km}
@@ -116,7 +113,7 @@ ENRICHMENT DATA:
 - Nearest airport: ${enrichment.nearest_airport ? enrichment.nearest_airport.name + ' (' + enrichment.nearest_airport.distance_km + ' km)' : 'Unknown'}
 - Sports facilities within 2km: ${enrichment.sports_count_2km}
 ` : ''}
-Score this property for this buyer.`;
+Score this property for this buyer. Consider their buyer type, transport needs, and daily priorities carefully.`;
 
   try {
     const response = await client.messages.create({
@@ -174,13 +171,14 @@ export async function generatePersona(profile) {
   }
 
   try {
+    const toArr = (v) => Array.isArray(v) ? v : (v ? [v] : []);
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 200,
+      max_tokens: 250,
       messages: [{
         role: 'user',
         content: `Based on this home buyer profile, create a fun buyer persona with an emoji and title. Write a 3-4 sentence description that captures their personality, what they're looking for, and what kind of lifestyle they want. Be warm, specific, and paint a vivid picture. Respond in ${profile.language === 'pt' ? 'Portuguese (European/Portugal)' : 'English'}.
-Profile: ${profile.family_size}, searching in ${profile.city}, budget ${profile.budget_range}, wants ${profile.outdoor_space} outdoor space, vibe: ${Array.isArray(profile.vibe) ? profile.vibe.join(', ') : (profile.vibe || '')}, priorities: ${Array.isArray(profile.priorities) ? profile.priorities.join(', ') : (profile.priorities || '')}, pets: ${profile.pets}, work: ${profile.commute_priority || 'not specified'}.
+Profile: ${profile.buyer_type || 'Home buyer'}, searching on the Silver Coast Portugal, budget €${(profile.budget_min || 0).toLocaleString()}–€${(profile.budget_max || 0).toLocaleString()}, wants ${profile.outdoor_space || 'flexible'} outdoor space, area: ${profile.setting || 'flexible'}, priorities: ${toArr(profile.priorities).join(', ') || 'none specified'}, pets: ${profile.pets || 'none'}, transport: ${profile.transport || 'car'}, features: ${toArr(profile.features).join(', ') || 'none'}, purpose: ${profile.purpose || 'primary home'}.
 Return ONLY JSON: { "emoji": "🌿", "title": "The Urban Gardener", "description": "..." }`
       }],
     });
@@ -202,18 +200,14 @@ function scoreWithRules(profile, property, enrichment) {
   const concerns = [];
   const pt = profile.language === 'pt';
 
-  // Budget fit (20 pts)
-  const budgetMap = {
-    'Under £200K': 200000, '£200K-£400K': 400000, '£400K-£600K': 600000,
-    '£600K-£800K': 800000, '£800K+': 1200000,
-    'Under €200K': 200000, '€200K-€400K': 400000, '€400K-€600K': 600000,
-    '€600K-€800K': 800000, '€800K+': 1200000,
-  };
-  const maxBudget = budgetMap[profile.budget_range] || 500000;
-  if (property.price <= maxBudget) {
+  // Budget fit (20 pts) — using exact min/max
+  const price = property.price || 0;
+  const bMax = profile.budget_max || 9999999;
+  const bMin = profile.budget_min || 0;
+  if (price >= bMin && price <= bMax) {
     score += 15;
-    if (property.price <= maxBudget * 0.85) highlights.push(pt ? 'Bem dentro do orçamento' : 'Well within budget');
-  } else if (property.price <= maxBudget * 1.1) {
+    if (price <= bMax * 0.85) highlights.push(pt ? 'Bem dentro do orçamento' : 'Well within budget');
+  } else if (price <= bMax * 1.1) {
     score += 5;
     concerns.push(pt ? 'Ligeiramente acima do orçamento' : 'Slightly above budget');
   } else {
@@ -221,57 +215,75 @@ function scoreWithRules(profile, property, enrichment) {
     concerns.push(pt ? 'Acima do orçamento' : 'Above budget');
   }
 
-  // Commute (15 pts)
-  if (property.commute_city_center) {
-    if (property.commute_city_center <= 15) { score += 15; highlights.push(pt ? `${property.commute_city_center} min do centro` : `${property.commute_city_center} min commute`); }
-    else if (property.commute_city_center <= 25) score += 10;
-    else if (property.commute_city_center <= 40) score += 5;
+  // Size fit
+  if (profile.min_sqm && profile.min_sqm > 0 && property.sqm) {
+    if (property.sqm >= profile.min_sqm) { score += 5; highlights.push(pt ? `${property.sqm}m² (mín. ${profile.min_sqm})` : `${property.sqm}m² (min. ${profile.min_sqm})`); }
   }
 
-  // Walkability — use OSM enrichment if available, else fallback to property field
+  // Beds fit
+  if (property.beds >= (profile.min_beds || 1)) { score += 3; }
+
+  // Transport & walkability
+  const transport = (profile.transport || '').toLowerCase();
   const walkScore = enrichment?.walkability ?? property.walkability;
-  if (walkScore >= 7) { score += 8; highlights.push(pt ? `Zona caminhável (${walkScore}/10)` : `Walkable area (${walkScore}/10)`); }
-  else if (walkScore >= 5) { score += 5; }
-  else if (walkScore >= 3) { score += 2; }
-  else if (walkScore != null && walkScore < 3) { concerns.push(pt ? 'Zona dependente de carro' : 'Car-dependent area'); }
+  const needsWalkability = transport.includes('walking') || transport.includes('pé') || transport.includes('public') || transport.includes('público') || transport.includes('bicycle') || transport.includes('bicicleta');
 
-  // Schools — use OSM enrichment
+  if (needsWalkability) {
+    if (walkScore >= 7) { score += 10; highlights.push(pt ? `Zona caminhável (${walkScore}/10)` : `Walkable area (${walkScore}/10)`); }
+    else if (walkScore >= 5) { score += 5; }
+    else if (walkScore != null && walkScore < 3) { score -= 3; concerns.push(pt ? 'Zona dependente de carro' : 'Car-dependent area'); }
+    if (enrichment?.transport_count_500m >= 2) { score += 3; }
+  } else {
+    if (walkScore >= 7) { score += 5; highlights.push(pt ? `Zona caminhável (${walkScore}/10)` : `Walkable area (${walkScore}/10)`); }
+    else if (walkScore >= 5) { score += 3; }
+  }
+
+  // Schools (important for families)
+  const bt = (profile.buyer_type || '').toLowerCase();
   const schoolRating = enrichment?.schools || property.schools_quality;
-  if (schoolRating === 'excellent') { score += 5; highlights.push(pt ? 'Escolas excelentes perto' : 'Excellent schools nearby'); }
-  else if (schoolRating === 'good') { score += 3; highlights.push(pt ? 'Boas escolas perto' : 'Good schools nearby'); }
+  if (bt.includes('family') || bt.includes('família') || bt.includes('familia')) {
+    if (schoolRating === 'excellent') { score += 6; highlights.push(pt ? 'Escolas excelentes perto' : 'Excellent schools nearby'); }
+    else if (schoolRating === 'good') { score += 4; highlights.push(pt ? 'Boas escolas perto' : 'Good schools nearby'); }
+  } else {
+    if (schoolRating === 'excellent') { score += 3; }
+    else if (schoolRating === 'good') { score += 2; }
+  }
 
-  // Beach proximity — bonus for coastal lifestyle
-  if (enrichment?.beach_nearby) { score += 3; highlights.push(pt ? `Praia perto (${enrichment.nearest_beach?.distance_km || '?'} km)` : `Beach nearby (${enrichment.nearest_beach?.distance_km || '?'} km)`); }
+  // Beach proximity
+  if (enrichment?.beach_nearby) { score += 4; highlights.push(pt ? `Praia perto (${enrichment.nearest_beach?.distance_km || '?'} km)` : `Beach nearby (${enrichment.nearest_beach?.distance_km || '?'} km)`); }
 
-  // Shops & restaurants — convenience scoring
+  // Shops & restaurants
   if (enrichment?.shops_count_1km >= 3 && enrichment?.restaurants_count_1km >= 3) {
     score += 3; highlights.push(pt ? 'Lojas e restaurantes perto' : 'Shops & restaurants nearby');
   }
 
-  // Transport — important for non-drivers
-  if (enrichment?.transport_count_500m >= 2) { score += 2; }
-
-  // Healthcare
+  // Healthcare (important for retirees)
   if (enrichment?.healthcare_count_1km >= 1) { score += 1; }
-  else if (enrichment?.healthcare_count_1km === 0) { concerns.push(pt ? 'Sem saúde a menos de 1km' : 'No healthcare within 1km'); }
+  else if (enrichment?.healthcare_count_1km === 0) {
+    if (bt.includes('retired') || bt.includes('reformado')) { score -= 3; concerns.push(pt ? 'Sem saúde a menos de 1km' : 'No healthcare within 1km'); }
+    else { concerns.push(pt ? 'Sem saúde a menos de 1km' : 'No healthcare within 1km'); }
+  }
 
-  // Airport — useful for expats/relocators
+  // Airport
   if (enrichment?.nearest_airport?.distance_km) {
-    if (enrichment.nearest_airport.distance_km <= 30) highlights.push(pt ? `Aeroporto ${enrichment.nearest_airport.name} a ${enrichment.nearest_airport.distance_km} km` : `${enrichment.nearest_airport.name} airport ${enrichment.nearest_airport.distance_km} km`);
+    if (enrichment.nearest_airport.distance_km <= 30) highlights.push(pt ? `Aeroporto a ${enrichment.nearest_airport.distance_km} km` : `Airport ${enrichment.nearest_airport.distance_km} km`);
     else if (enrichment.nearest_airport.distance_km >= 80) concerns.push(pt ? `Aeroporto a ${enrichment.nearest_airport.distance_km} km` : `Airport ${enrichment.nearest_airport.distance_km} km away`);
   }
 
-  // Pets (5 pts)
-  if (profile.pets !== 'No pets' && property.pet_friendly) { score += 5; highlights.push(pt ? 'Aceita animais' : 'Pet-friendly'); }
-  if (profile.pets !== 'No pets' && !property.pet_friendly) concerns.push(pt ? 'Não aceita animais' : 'Not pet-friendly');
+  // Pets
+  const pets = (profile.pets || '').toLowerCase();
+  if ((pets.includes('dog') || pets.includes('cão') || pets.includes('cao')) && property.pet_friendly) { score += 4; highlights.push(pt ? 'Aceita animais' : 'Pet-friendly'); }
+  if ((pets.includes('dog') || pets.includes('cão') || pets.includes('cao')) && !property.pet_friendly) concerns.push(pt ? 'Não aceita animais' : 'Not pet-friendly');
 
-  // Outdoor space (5 pts)
-  if (profile.outdoor_space === 'Big garden' && property.features?.includes('garden')) { score += 5; highlights.push(pt ? 'Tem jardim' : 'Has garden'); }
+  // Outdoor space
+  const outdoor = (profile.outdoor_space || '').toLowerCase();
+  if ((outdoor.includes('garden') || outdoor.includes('jardim')) && property.features?.some(f => f.includes('garden'))) { score += 4; highlights.push(pt ? 'Tem jardim' : 'Has garden'); }
+  if ((outdoor.includes('large') || outdoor.includes('terreno')) && property.sqm >= 200) { score += 3; }
 
-  // Parks from enrichment
+  // Parks
   if (enrichment?.parks_count_1km >= 2) { score += 2; }
 
-  // Cap at 100
+  // Cap
   score = Math.min(100, Math.max(0, score));
 
   return {
@@ -279,17 +291,18 @@ function scoreWithRules(profile, property, enrichment) {
     highlights: highlights.slice(0, 4),
     concerns: concerns.slice(0, 3),
     reasoning: pt
-      ? `Pontuação baseada em orçamento, deslocação, caminhabilidade (${walkScore || '?'}/10), comodidades do bairro e preferências de estilo de vida.`
-      : `Score based on budget fit, commute, walkability (${walkScore || '?'}/10), neighbourhood amenities, and lifestyle preferences.`,
+      ? `Pontuação baseada em orçamento, localização, caminhabilidade (${walkScore || '?'}/10), comodidades e estilo de vida.`
+      : `Score based on budget, location, walkability (${walkScore || '?'}/10), amenities, and lifestyle fit.`,
   };
 }
 
 function fallbackPersona(profile) {
-  const personas = [
-    { emoji: '🏡', title: 'The Nester', description: 'Looking for a forever home with room to grow.' },
-    { emoji: '🌆', title: 'The Urban Explorer', description: 'Wants the buzz of the city right outside the door.' },
-    { emoji: '🌿', title: 'The Green Seeker', description: 'Needs nature, space, and fresh air to feel at home.' },
-    { emoji: '💼', title: 'The Smart Commuter', description: 'Location is everything — close to work, close to life.' },
-  ];
-  return personas[Math.floor(Math.random() * personas.length)];
+  const bt = (profile.buyer_type || '').toLowerCase();
+  if (bt.includes('retired') || bt.includes('reformado')) return { emoji: '🌅', title: 'The Retirement Explorer', description: 'Time to live where you\'ve always dreamed.' };
+  if (bt.includes('remote') || bt.includes('remoto')) return { emoji: '💻', title: 'The Digital Nomad', description: 'Freedom to live wherever inspires you.' };
+  if (bt.includes('family') || bt.includes('família')) return { emoji: '👨‍👩‍👧‍👦', title: 'The Family Builder', description: 'Schools, garden, safety — everything for a happy family.' };
+  if (bt.includes('couple') || bt.includes('casal')) return { emoji: '💑', title: 'The Adventure Couple', description: 'Building a future together in a new place.' };
+  if (bt.includes('investor') || bt.includes('investidor')) return { emoji: '📈', title: 'The Strategic Investor', description: 'Eye on returns and appreciation potential.' };
+  if (bt.includes('student') || bt.includes('estudante')) return { emoji: '🎓', title: 'The Smart Student', description: 'Smart budget, great location.' };
+  return { emoji: '🏡', title: 'The Smart Buyer', description: 'Methodical, informed, and ready to find the perfect fit.' };
 }
