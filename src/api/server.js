@@ -823,7 +823,8 @@ async function getCandidates(profile) {
   let query = supabase
     .from('properties')
     .select('*, agents(name, initials, phone, agency:agencies(name))')
-    .eq('listing_status', 'active');
+    .eq('listing_status', 'active')
+    .eq('country', 'PT');
 
   // If specific concelhos selected, filter by them
   const selectedConcelhos = profile.raw_answers?.concelhos;
