@@ -118,10 +118,13 @@ ${enrichment ? `
 NEIGHBOURHOOD DATA:
 - Walkability: ${enrichment.walkability}/10 (${enrichment.walkability_label || ''})
 - Type: ${enrichment.neighborhood_type || 'Unknown'}
+- Computed vibe: ${(enrichment.computed_vibe || []).join(', ') || 'Not computed'}
 - Schools: ${enrichment.schools || '?'} (${enrichment.schools_count_2km || 0} within 2km)
-- Restaurants: ${enrichment.restaurants_count_1km || 0}, Shops: ${enrichment.shops_count_1km || 0} within 1km
-- Transport: ${enrichment.transport_count_500m || 0} stops, Healthcare: ${enrichment.healthcare_count_1km || 0} within 1km
+- Restaurants: ${enrichment.restaurants_count_1km || 0}, Bars: ${enrichment.bars_count_1km || 0}, Shops: ${enrichment.shops_count_1km || 0} within 1km
+- Transport: ${enrichment.transport_count_500m || 0} stops, Cycling: ${enrichment.cycling_count_500m || 0} bike facilities within 500m
+- Healthcare: ${enrichment.healthcare_count_1km || 0} within 1km
 - Parks: ${enrichment.parks_count_1km || 0} within 1km
+- Tourism/culture: ${enrichment.tourism_count_2km || 0} within 2km
 - Beach: ${enrichment.beach_nearby ? 'Yes — ' + (enrichment.nearest_beach?.name || '') + ' (' + (enrichment.nearest_beach?.distance_km || '?') + ' km)' : 'No'}
 - Airport: ${enrichment.nearest_airport ? enrichment.nearest_airport.name + ' (' + enrichment.nearest_airport.distance_km + ' km)' : 'Unknown'}
 ` : ''}
