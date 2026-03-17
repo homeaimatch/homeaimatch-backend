@@ -118,7 +118,7 @@ app.post('/api/match', async (req, res) => {
       preScore: quickPreScore(profile, pe.property, pe.enrichment),
     }));
     preScored.sort((a, b) => b.preScore - a.preScore);
-    const topCandidates = preScored.slice(0, 8);
+    const topCandidates = preScored.slice(0, 6);
 
     console.log(`[Match] Pre-sorted ${candidates.length} → top ${topCandidates.length} for AI scoring`);
 
@@ -322,16 +322,27 @@ app.get('/api/admin/contact-messages', async (req, res) => {
 
 app.get('/api/admin/stats', async (req, res) => {
   try {
-    const [properties, agents, leads, subscribers, contacts] = await Promise.all([
-      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id', { count: 'exact' }).limit(50000),
-      supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }).limit(50000),
-      supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }).limit(50000),
-      supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }).limit(50000),
-      supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }).limit(50000),
+    // Use separate count queries to avoid the 1000-row limit
+    const [
+      totalProperties, activeProperties, properties1, properties2,
+      agents, leads, subscribers, contacts
+    ] = await Promise.all([
+      supabase.from('properties').select('id', { count: 'exact', head: true }),
+      supabase.from('properties').select('id', { count: 'exact', head: true }).eq('listing_status', 'active'),
+      // Fetch properties in 2 pages to overcome 1000-row limit on free tier
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id').range(0, 999),
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id').range(1000, 4999),
+      supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }),
+      supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }),
+      supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }),
+      supabase.from('contact_messages').select('id, name, email, type, message, is_read, created_at', { count: 'exact' }),
     ]);
 
+    // Combine paginated property data
+    const allPropertyData = [...(properties1.data || []), ...(properties2.data || [])];
+
     res.json({
-      properties: { data: properties.data || [], count: properties.count || 0 },
+      properties: { data: allPropertyData, count: totalProperties.count || 0, activeCount: activeProperties.count || 0 },
       agents: { data: agents.data || [], count: agents.count || 0 },
       leads: { data: leads.data || [], count: leads.count || 0 },
       subscribers: { data: subscribers.data || [], count: subscribers.count || 0 },
@@ -462,24 +473,23 @@ app.post('/api/enrich/:id', async (req, res) => {
 app.post('/api/admin/enrich-all', async (req, res) => {
   const { force } = req.body || {};
   try {
-    // Get all properties with coordinates
-    const { data: allProps } = await supabase
-      .from('properties')
-      .select('id, title, latitude, longitude')
-      .not('latitude', 'is', null)
-      .not('longitude', 'is', null)
-      .limit(50000);
+    // Get all properties with coordinates (paginated to overcome 1000-row limit)
+    const [props1, props2] = await Promise.all([
+      supabase.from('properties').select('id, title, latitude, longitude').not('latitude', 'is', null).not('longitude', 'is', null).range(0, 999),
+      supabase.from('properties').select('id, title, latitude, longitude').not('latitude', 'is', null).not('longitude', 'is', null).range(1000, 4999),
+    ]);
+    const allProps = [...(props1.data || []), ...(props2.data || [])];
 
     if (!allProps || allProps.length === 0) {
       return res.json({ message: 'No properties with coordinates found', enriched: 0, total: 0 });
     }
 
-    // Get properties with ACTUAL OSM enrichment (not just any enrichment row)
-    const { data: enriched } = await supabase
-      .from('property_enrichment')
-      .select('property_id, enrichment_source, walkability')
-      .eq('enrichment_source', 'openstreetmap')
-      .limit(50000);
+    // Get properties with ACTUAL OSM enrichment (paginated)
+    const [enr1, enr2] = await Promise.all([
+      supabase.from('property_enrichment').select('property_id, enrichment_source, walkability').eq('enrichment_source', 'openstreetmap').range(0, 999),
+      supabase.from('property_enrichment').select('property_id, enrichment_source, walkability').eq('enrichment_source', 'openstreetmap').range(1000, 4999),
+    ]);
+    const enriched = [...(enr1.data || []), ...(enr2.data || [])];
     
     const enrichedIds = new Set((enriched || []).map(e => e.property_id));
     const unenriched = force ? allProps : allProps.filter(p => !enrichedIds.has(p.id));
@@ -578,19 +588,17 @@ app.post('/api/admin/casafari-sync', async (req, res) => {
     // Only enrich properties that don't have OSM data yet
     if (results.inserted > 0) {
       console.log(`[Casafari Sync] Starting sequential enrichment for new properties...`);
-      const { data: unenriched } = await supabase
-        .from('properties')
-        .select('id, title, latitude, longitude')
-        .eq('source', 'casafari')
-        .not('latitude', 'is', null)
-        .not('longitude', 'is', null)
-        .limit(50000);
+      const [up1, up2] = await Promise.all([
+        supabase.from('properties').select('id, title, latitude, longitude').eq('source', 'casafari').not('latitude', 'is', null).not('longitude', 'is', null).range(0, 999),
+        supabase.from('properties').select('id, title, latitude, longitude').eq('source', 'casafari').not('latitude', 'is', null).not('longitude', 'is', null).range(1000, 4999),
+      ]);
+      const unenriched = [...(up1.data || []), ...(up2.data || [])];
 
-      const { data: alreadyEnriched } = await supabase
-        .from('property_enrichment')
-        .select('property_id')
-        .eq('enrichment_source', 'openstreetmap')
-        .limit(50000);
+      const [ae1, ae2] = await Promise.all([
+        supabase.from('property_enrichment').select('property_id').eq('enrichment_source', 'openstreetmap').range(0, 999),
+        supabase.from('property_enrichment').select('property_id').eq('enrichment_source', 'openstreetmap').range(1000, 4999),
+      ]);
+      const alreadyEnriched = [...(ae1.data || []), ...(ae2.data || [])];
 
       const enrichedSet = new Set((alreadyEnriched || []).map(e => e.property_id));
       const toEnrich = (unenriched || []).filter(p => !enrichedSet.has(p.id));
@@ -716,26 +724,45 @@ async function getCandidates(profile) {
   const minBeds = bedsMap[profile.family_size] || 1;
   query = query.gte('beds', minBeds);
 
-  const { data, error } = await query.limit(50);
-  if (error) {
-    console.error('Candidate query error:', error);
+  // Fetch candidates with pagination to overcome 1000-row Supabase free tier limit
+  // First page
+  const { data: page1, error: err1 } = await query.range(0, 999);
+  if (err1) {
+    console.error('Candidate query error:', err1);
     return [];
   }
-  return data || [];
+  let allCandidates = page1 || [];
+
+  // If we got exactly 1000, there might be more — fetch second page
+  if (allCandidates.length === 1000) {
+    const { data: page2 } = await query.range(1000, 1999);
+    if (page2 && page2.length > 0) {
+      allCandidates = [...allCandidates, ...page2];
+    }
+  }
+
+  return allCandidates;
 }
 
 async function getEnrichmentBatch(propertyIds) {
   if (!propertyIds.length) return {};
 
-  const { data } = await supabase
-    .from('property_enrichment')
-    .select('*')
-    .in('property_id', propertyIds);
+  // Batch into chunks of 200 to avoid query size limits
+  const CHUNK = 200;
+  const allData = [];
+  for (let i = 0; i < propertyIds.length; i += CHUNK) {
+    const chunk = propertyIds.slice(i, i + CHUNK);
+    const { data } = await supabase
+      .from('property_enrichment')
+      .select('*')
+      .in('property_id', chunk);
+    if (data) allData.push(...data);
+  }
 
   // If a property has both old (google+gov) and new (openstreetmap) rows,
   // prefer the openstreetmap one
   const map = {};
-  (data || []).forEach(e => {
+  allData.forEach(e => {
     const existing = map[e.property_id];
     if (!existing || e.enrichment_source === 'openstreetmap') {
       map[e.property_id] = e;
