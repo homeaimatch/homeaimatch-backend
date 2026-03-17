@@ -636,46 +636,172 @@ app.get('/api/admin/casafari-concelhos', (req, res) => {
 // Quick rule-based pre-scorer for fast candidate filtering (no API calls)
 function quickPreScore(profile, property, enrichment) {
   let score = 50;
-  const budgetMap = {
-    'Under €200K': 200000, '€200K-€400K': 400000, '€400K-€600K': 600000,
-    '€600K-€800K': 800000, '€800K+': 1200000,
-    'Under £200K': 200000, '£200K-£400K': 400000, '£400K-£600K': 600000,
-    '£600K-£800K': 800000, '£800K+': 1200000,
-  };
-  const maxBudget = budgetMap[profile.budget_range] || 500000;
-  if (property.price <= maxBudget) score += 15;
-  else if (property.price <= maxBudget * 1.1) score += 5;
-  else score -= 10;
-  if (property.commute_city_center && property.commute_city_center <= 15) score += 10;
+
+  // Budget fit (20 pts) — now using exact min/max from form
+  const price = property.price || 0;
+  if (price >= (profile.budget_min || 0) && price <= (profile.budget_max || 9999999)) {
+    score += 15;
+    if (price <= (profile.budget_max || 9999999) * 0.85) score += 5; // well within budget bonus
+  } else if (price <= (profile.budget_max || 9999999) * 1.15) {
+    score += 5;
+  } else {
+    score -= 10;
+  }
+
+  // Size fit — if buyer specified min sqm
+  if (profile.min_sqm && profile.min_sqm > 0 && property.sqm) {
+    if (property.sqm >= profile.min_sqm) score += 5;
+    else if (property.sqm >= profile.min_sqm * 0.8) score += 2;
+    else score -= 3;
+  }
+
+  // Beds fit
+  if (property.beds >= (profile.min_beds || 1)) score += 5;
+
+  // Condition fit
+  const cond = (profile.property_condition || '').toLowerCase();
+  const pCond = (property.condition || '').toLowerCase();
+  if (cond.includes("don't mind") || cond.includes('tanto faz') || !cond) {
+    score += 3;
+  } else if (cond.includes('move-in') || cond.includes('habitar')) {
+    if (pCond === 'move-in') score += 8;
+  } else if (cond.includes('new build') || cond.includes('nova')) {
+    if (pCond === 'move-in' || pCond === 'new') score += 8;
+  } else if (cond.includes('light') || cond.includes('ligeiras')) {
+    if (pCond === 'move-in' || pCond === 'renovation-light') score += 6;
+  } else if (cond.includes('full') || cond.includes('total')) {
+    if (pCond === 'renovation-major' || pCond === 'renovation-light') score += 6;
+  }
+
+  // Transport & walkability alignment
+  const transport = (profile.transport || '').toLowerCase();
   const walk = enrichment?.walkability ?? property.walkability;
-  if (walk >= 7) score += 8;
-  else if (walk >= 5) score += 4;
-  if (enrichment?.beach_nearby) score += 3;
-  if (enrichment?.schools === 'excellent') score += 4;
-  else if (enrichment?.schools === 'good') score += 2;
-  if (profile.pets !== 'No pets' && property.pet_friendly) score += 5;
-  if (enrichment?.shops_count_1km >= 3) score += 2;
-  if (enrichment?.transport_count_500m >= 2) score += 2;
+  if (transport.includes('walking') || transport.includes('pé') || transport.includes('public') || transport.includes('público') || transport.includes('bicycle') || transport.includes('bicicleta')) {
+    // Buyer relies on walkability/public transport — weight it heavily
+    if (walk >= 7) score += 12;
+    else if (walk >= 5) score += 6;
+    else if (walk >= 3) score += 2;
+    else score -= 5; // bad match for non-car user
+    if (enrichment?.transport_count_500m >= 2) score += 4;
+  } else {
+    // Has a car — walkability nice but not essential
+    if (walk >= 7) score += 5;
+    else if (walk >= 5) score += 3;
+  }
+
+  // Setting/area type alignment
+  const setting = (profile.setting || '').toLowerCase();
+  const nType = enrichment?.neighborhood_type || '';
+  if (setting.includes('beach') || setting.includes('praia')) {
+    if (enrichment?.beach_nearby) score += 8;
+  } else if (setting.includes('urban') || setting.includes('urbano')) {
+    if (nType === 'urban') score += 6;
+  } else if (setting.includes('country') || setting.includes('campo')) {
+    if (nType === 'rural') score += 6;
+  } else if (setting.includes('historic') || setting.includes('históric')) {
+    // Historic towns like Óbidos — check city name
+    const hCities = ['óbidos', 'obidos', 'alcobaça', 'alcobaca'];
+    if (hCities.some(c => (property.city || '').toLowerCase().includes(c))) score += 6;
+  }
+
+  // Priorities alignment
+  const prios = (profile.priorities || []).map(p => p.toLowerCase());
+  if (prios.some(p => p.includes('beach') || p.includes('praia')) && enrichment?.beach_nearby) score += 4;
+  if (prios.some(p => p.includes('school') || p.includes('escola')) && (enrichment?.schools === 'excellent' || enrichment?.schools === 'good')) score += 4;
+  if (prios.some(p => p.includes('walkable') || p.includes('caminhável')) && walk >= 7) score += 4;
+  if (prios.some(p => p.includes('restaurant') || p.includes('restaurante')) && enrichment?.restaurants_count_1km >= 3) score += 3;
+  if (prios.some(p => p.includes('healthcare') || p.includes('saúde') || p.includes('saude')) && enrichment?.healthcare_count_1km >= 1) score += 3;
+  if (prios.some(p => p.includes('transport') || p.includes('transporte')) && enrichment?.transport_count_500m >= 2) score += 3;
+  if (prios.some(p => p.includes('peace') || p.includes('quiet') || p.includes('paz') || p.includes('sossego')) && walk <= 4) score += 3;
+  if (prios.some(p => p.includes('nature') || p.includes('natureza')) && enrichment?.parks_count_1km >= 2) score += 3;
+
+  // Feature matching
+  const feats = (profile.features || []).map(f => f.toLowerCase().replace(/^[^\w]*/, '')); // strip emoji prefix
+  const pFeats = (property.features || []).map(f => f.toLowerCase());
+  let featMatch = 0;
+  feats.forEach(f => {
+    if (f.includes('garden') || f.includes('jardim')) { if (pFeats.some(pf => pf.includes('garden'))) featMatch++; }
+    else if (f.includes('pool') || f.includes('piscina')) { if (pFeats.some(pf => pf.includes('pool'))) featMatch++; }
+    else if (f.includes('sea view') || f.includes('vista mar')) { if (pFeats.some(pf => pf.includes('sea') || pf.includes('view') || pf.includes('ocean'))) featMatch++; }
+    else if (f.includes('garage') || f.includes('garagem')) { if ((property.parking || []).some(pk => pk.includes('garage'))) featMatch++; }
+    else if (f.includes('office') || f.includes('escritório') || f.includes('escritorio')) { if (pFeats.some(pf => pf.includes('office'))) featMatch++; }
+    else if (f.includes('solar')) { if (pFeats.some(pf => pf.includes('solar'))) featMatch++; }
+    else if (f.includes('fireplace') || f.includes('lareira')) { if (pFeats.some(pf => pf.includes('fireplace'))) featMatch++; }
+    else if (f.includes('terrace') || f.includes('terraço') || f.includes('terraco')) { if (pFeats.some(pf => pf.includes('terrace') || pf.includes('balcony'))) featMatch++; }
+  });
+  score += Math.min(featMatch * 3, 12);
+
+  // Pets
+  const pets = (profile.pets || '').toLowerCase();
+  if (pets.includes('dog') || pets.includes('cão') || pets.includes('cao')) {
+    if (property.pet_friendly) score += 4;
+    else score -= 2;
+  }
+
+  // Buyer type specific bonuses
+  const bt = (profile.buyer_type || '').toLowerCase();
+  if (bt.includes('retired') || bt.includes('reformado')) {
+    if (enrichment?.healthcare_count_1km >= 1) score += 3;
+    if (walk >= 5) score += 2; // walkability matters for retirees
+  } else if (bt.includes('family') || bt.includes('família') || bt.includes('familia')) {
+    if (enrichment?.schools === 'excellent') score += 4;
+    if (enrichment?.parks_count_1km >= 1) score += 2;
+  } else if (bt.includes('remote') || bt.includes('remoto')) {
+    if (property.sqm >= 100) score += 2; // space for office
+  } else if (bt.includes('investor') || bt.includes('investidor')) {
+    // Investors care about location and price/sqm ratio
+    if (property.price_per_sqm && property.price_per_sqm < 2000) score += 3;
+  }
+
   return Math.min(100, Math.max(0, score));
 }
 
+
 function buildProfile(answers) {
+  // Parse budget values from form fields
+  const parseBudget = (s) => {
+    if (!s || s.includes('minimum') || s.includes('mínimo')) return 0;
+    const n = s.replace(/[^0-9.]/g, '');
+    if (s.includes('M')) return parseFloat(n) * 1000000;
+    if (s.includes('K')) return parseFloat(n) * 1000;
+    return parseFloat(n) || 0;
+  };
+
   return {
-    city: answers.location || answers.city,
-    country: (answers.market || 'UK').toUpperCase(),
-    radius: answers.radius,
-    budget_range: answers.budget,
-    family_size: answers.family,
-    work_location: answers.workLocation,
-    commute_priority: answers.commutePriority,
-    property_condition: answers.condition,
-    outdoor_space: answers.outdoor,
-    vibe: answers.vibe || [],
-    pets: answers.pets,
-    parking: answers.parking,
-    dealbreakers: answers.dealbreakers || [],
+    // Location (hardcoded Silver Coast for now)
+    city: answers.location || 'Silver Coast',
+    country: 'PT',
+
+    // Buyer profile (new)
+    buyer_type: answers.buyerType || '',
+    transport: answers.transport || '',
+
+    // Property essentials (from form)
+    min_beds: parseInt(answers.minBeds) || 1,
+    min_baths: parseInt(answers.minBaths) || 1,
+    min_sqm: parseInt(answers.minSqm) || 0,
+    budget_min: parseBudget(answers.budgetMin),
+    budget_max: parseBudget(answers.budgetMax) || 9999999,
+
+    // Property preferences
+    property_condition: answers.condition || '',
+    outdoor_space: answers.outdoor || '',
+    features: answers.features || [],
+
+    // Lifestyle
+    setting: answers.setting || '',
     priorities: answers.priorities || [],
-    lifestyle: answers.lifestyle || [],
+
+    // Pets & parking
+    pets: answers.pets || '',
+    parking: answers.parking || '',
+
+    // Readiness (gold for agents)
+    purpose: answers.purpose || '',
+    mortgage: answers.mortgage || '',
+    intent: answers.intent || '',
+    timeline: answers.timeline || '',
+
     language: answers.language || 'en',
     raw_answers: answers,
   };
@@ -687,8 +813,7 @@ async function getCandidates(profile) {
     .select('*, agents(name, initials, phone, agency:agencies(name))')
     .eq('listing_status', 'active');
 
-  // Filter by city if specified (case-insensitive)
-  // "Silver Coast" = all Portuguese Silver Coast properties (Lourinhã, Peniche, Óbidos, etc.)
+  // Silver Coast = all Portuguese Silver Coast properties
   const SILVER_COAST_CITIES = ['Lourinhã', 'Peniche', 'Óbidos', 'Bombarral', 'Caldas da Rainha', 'Torres Vedras', 'Nazaré', 'Alcobaça', 'Cadaval', 'Mafra'];
   if (profile.city && profile.city.toLowerCase().includes('silver coast')) {
     query = query.in('city', SILVER_COAST_CITIES);
@@ -696,36 +821,30 @@ async function getCandidates(profile) {
     query = query.ilike('city', profile.city);
   }
 
-  // Filter by country (case-insensitive)
-  if (profile.country) {
-    query = query.ilike('country', profile.country);
+  // Budget filter with 20% buffer (let AI handle nuance)
+  const budgetMin = Math.max(0, (profile.budget_min || 0) * 0.8);
+  const budgetMax = (profile.budget_max || 9999999) * 1.2;
+  query = query.gte('price', budgetMin).lte('price', budgetMax);
+
+  // Min bedrooms filter
+  if (profile.min_beds && profile.min_beds > 1) {
+    query = query.gte('beds', profile.min_beds);
   }
 
-  // Budget filter with 30% buffer (let AI handle nuance)
-  // Normalise budget string (handle en-dash vs hyphen)
-  const normBudget = (profile.budget_range || '').replace(/\s*[–—-]\s*/g, '-');
-  const budgetMap = {
-    'Under £200K': [0, 260000], '£200K-£400K': [140000, 520000],
-    '£400K-£600K': [280000, 780000], '£600K-£800K': [420000, 1040000],
-    '£800K+': [560000, 99999999],
-    'Under €200K': [0, 260000], '€200K-€400K': [140000, 520000],
-    '€400K-€600K': [280000, 780000], '€600K-€800K': [420000, 1040000],
-    '€800K+': [560000, 99999999],
-  };
-  const [minP, maxP] = budgetMap[normBudget] || [0, 99999999];
-  query = query.gte('price', minP).lte('price', maxP);
+  // Min sqm filter (with buffer)
+  if (profile.min_sqm && profile.min_sqm > 0) {
+    query = query.gte('sqm', Math.round(profile.min_sqm * 0.8));
+  }
 
-  // Beds based on family size
-  const bedsMap = {
-    'Just me': 1, 'Me and a partner': 1, 'Couple': 1,
-    'Small family (1-2 kids)': 2, 'Large family (3+ kids)': 3,
-    'Larger family (3+ kids)': 3, 'Sharing with friends': 2, 'Housemates': 2,
-  };
-  const minBeds = bedsMap[profile.family_size] || 1;
-  query = query.gte('beds', minBeds);
+  // Condition filter (exclude clearly wrong matches)
+  const condStr = (profile.property_condition || '').toLowerCase();
+  if (condStr.includes('new build') || condStr.includes('nova')) {
+    query = query.neq('condition', 'renovation-major');
+  } else if ((condStr.includes('full renovation') || condStr.includes('total')) && !condStr.includes("don't") && !condStr.includes('tanto')) {
+    query = query.neq('condition', 'move-in');
+  }
 
-  // Fetch candidates with pagination to overcome 1000-row Supabase free tier limit
-  // First page
+  // Fetch with pagination for Supabase free tier
   const { data: page1, error: err1 } = await query.range(0, 999);
   if (err1) {
     console.error('Candidate query error:', err1);
@@ -733,7 +852,6 @@ async function getCandidates(profile) {
   }
   let allCandidates = page1 || [];
 
-  // If we got exactly 1000, there might be more — fetch second page
   if (allCandidates.length === 1000) {
     const { data: page2 } = await query.range(1000, 1999);
     if (page2 && page2.length > 0) {
@@ -741,8 +859,10 @@ async function getCandidates(profile) {
     }
   }
 
+  console.log(`[getCandidates] ${allCandidates.length} candidates (budget: €${Math.round(budgetMin/1000)}K-€${Math.round(budgetMax/1000)}K, beds>=${profile.min_beds || 1}, sqm>=${profile.min_sqm || 'any'})`);
   return allCandidates;
 }
+
 
 async function getEnrichmentBatch(propertyIds) {
   if (!propertyIds.length) return {};
