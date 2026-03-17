@@ -750,19 +750,23 @@ function quickPreScore(profile, property, enrichment) {
     else score -= 2;
   }
 
-  // Neighbourhood vibe match (+6 max)
+  // Neighbourhood vibe match (+8 max) — uses computed_vibe from OSM + description mining
   const vibes = (profile.vibe || []).map(v => v.toLowerCase());
   const pVibes = (property.neighborhood_vibe || []).map(v => v.toLowerCase());
+  const computedVibes = (enrichment?.computed_vibe || []).map(v => v.toLowerCase());
+  const allVibes = [...pVibes, ...computedVibes]; // combine tagged + computed
   let vibeHits = 0;
   vibes.forEach(v => {
-    if (v.includes('family') || v.includes('familiar')) { if (pVibes.some(pv => pv.includes('family')) || desc.includes('familiar') || desc.includes('family') || desc.includes('tranquil')) vibeHits++; }
-    else if (v.includes('nightlife') || v.includes('noturna')) { if (pVibes.some(pv => pv.includes('nightlife')) || enrichment?.restaurants_count_1km >= 5) vibeHits++; }
-    else if (v.includes('quiet') || v.includes('calmo') || v.includes('tranquilo')) { if (pVibes.some(pv => pv.includes('quiet') || pv.includes('peaceful')) || (walk != null && walk <= 5)) vibeHits++; }
-    else if (v.includes('nature') || v.includes('natureza')) { if (enrichment?.parks_count_1km >= 2 || enrichment?.neighborhood_type === 'rural') vibeHits++; }
-    else if (v.includes('surf') || v.includes('laid-back') || v.includes('descontraído')) { if (enrichment?.beach_nearby || desc.includes('surf') || desc.includes('praia')) vibeHits++; }
-    else if (v.includes('community') || v.includes('comunidade')) { if (desc.includes('aldeia') || desc.includes('village') || desc.includes('comunidade')) vibeHits++; }
+    if (v.includes('family') || v.includes('familiar')) { if (allVibes.some(pv => pv.includes('family')) || desc.includes('familiar') || desc.includes('family') || desc.includes('tranquil') || (enrichment?.schools_count_2km >= 3 && enrichment?.parks_count_1km >= 1)) vibeHits++; }
+    else if (v.includes('nightlife') || v.includes('noturna')) { if (allVibes.some(pv => pv.includes('nightlife')) || enrichment?.bars_count_1km >= 2 || (enrichment?.restaurants_count_1km >= 5 && enrichment?.bars_count_1km >= 1)) vibeHits++; }
+    else if (v.includes('artsy') || v.includes('artístico') || v.includes('criativo')) { if (allVibes.some(pv => pv.includes('artsy') || pv.includes('creative')) || enrichment?.tourism_count_2km >= 2) vibeHits++; }
+    else if (v.includes('quiet') || v.includes('calmo') || v.includes('tranquilo')) { if (allVibes.some(pv => pv.includes('quiet') || pv.includes('peaceful')) || (walk != null && walk <= 4)) vibeHits++; }
+    else if (v.includes('nature') || v.includes('natureza')) { if (allVibes.some(pv => pv.includes('nature')) || enrichment?.parks_count_1km >= 2 || enrichment?.neighborhood_type === 'rural') vibeHits++; }
+    else if (v.includes('upscale') || v.includes('sofisticado') || v.includes('exclusivo')) { if (allVibes.some(pv => pv.includes('upscale') || pv.includes('luxury')) || desc.includes('luxo') || desc.includes('luxury') || desc.includes('premium')) vibeHits++; }
+    else if (v.includes('surf') || v.includes('laid-back') || v.includes('descontraído')) { if (allVibes.some(pv => pv.includes('surf')) || enrichment?.beach_nearby || desc.includes('surf') || desc.includes('praia')) vibeHits++; }
+    else if (v.includes('community') || v.includes('comunidade')) { if (allVibes.some(pv => pv.includes('community') || pv.includes('local')) || desc.includes('aldeia') || desc.includes('village') || desc.includes('comunidade')) vibeHits++; }
   });
-  score += Math.min(vibeHits * 3, 6);
+  score += Math.min(vibeHits * 3, 8);
 
   // Buyer type specific bonuses
   const bt = (profile.buyer_type || '').toLowerCase();
