@@ -112,10 +112,10 @@ app.post('/api/match', async (req, res) => {
       enrichment: enrichmentMap[p.id] || null,
     }));
 
-    // 4. Quick rule-based pre-sort (instant, free) → take top 8 for AI scoring
+    // 4. Quick rule-based pre-sort (instant, free) → take top 6 for AI scoring
     const preScored = propertiesWithEnrichment.map(pe => ({
       ...pe,
-      preScore: quickPreScore(profile, pe.property, pe.enrichment),
+      preScore: quickPreScore(profile, pe.property, pe.enrichment) + Math.random() * 2, // small jitter for tie-breaking diversity
     }));
     preScored.sort((a, b) => b.preScore - a.preScore);
     const topCandidates = preScored.slice(0, 6);
@@ -330,8 +330,8 @@ app.get('/api/admin/stats', async (req, res) => {
       supabase.from('properties').select('id', { count: 'exact', head: true }),
       supabase.from('properties').select('id', { count: 'exact', head: true }).eq('listing_status', 'active'),
       // Fetch properties in 2 pages to overcome 1000-row limit on free tier
-      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id').range(0, 999),
-      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id').range(1000, 4999),
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id, beds, baths, property_type, features, sqm, parking, condition').range(0, 999),
+      supabase.from('properties').select('id, city, region, price, listing_status, created_at, latitude, longitude, agent_id, beds, baths, property_type, features, sqm, parking, condition').range(1000, 4999),
       supabase.from('agents').select('id, name, email, created_at, agency_id', { count: 'exact' }),
       supabase.from('leads').select('id, status, created_at, property_id, match_score, buyer_profile', { count: 'exact' }),
       supabase.from('subscribers').select('id, email, source, created_at', { count: 'exact' }),
@@ -718,18 +718,30 @@ function quickPreScore(profile, property, enrichment) {
   // Feature matching
   const feats = (profile.features || []).map(f => f.toLowerCase().replace(/^[^\w]*/, '')); // strip emoji prefix
   const pFeats = (property.features || []).map(f => f.toLowerCase());
+  const desc = (property.description || '').toLowerCase();
   let featMatch = 0;
   feats.forEach(f => {
-    if (f.includes('garden') || f.includes('jardim')) { if (pFeats.some(pf => pf.includes('garden'))) featMatch++; }
-    else if (f.includes('pool') || f.includes('piscina')) { if (pFeats.some(pf => pf.includes('pool'))) featMatch++; }
-    else if (f.includes('sea view') || f.includes('vista mar')) { if (pFeats.some(pf => pf.includes('sea') || pf.includes('view') || pf.includes('ocean'))) featMatch++; }
-    else if (f.includes('garage') || f.includes('garagem')) { if ((property.parking || []).some(pk => pk.includes('garage'))) featMatch++; }
-    else if (f.includes('office') || f.includes('escritório') || f.includes('escritorio')) { if (pFeats.some(pf => pf.includes('office'))) featMatch++; }
-    else if (f.includes('solar')) { if (pFeats.some(pf => pf.includes('solar'))) featMatch++; }
-    else if (f.includes('fireplace') || f.includes('lareira')) { if (pFeats.some(pf => pf.includes('fireplace'))) featMatch++; }
-    else if (f.includes('terrace') || f.includes('terraço') || f.includes('terraco')) { if (pFeats.some(pf => pf.includes('terrace') || pf.includes('balcony'))) featMatch++; }
+    if (f.includes('garden') || f.includes('jardim')) { if (pFeats.some(pf => pf.includes('garden')) || desc.includes('jardim') || desc.includes('garden')) featMatch++; }
+    else if (f.includes('pool') || f.includes('piscina')) { if (pFeats.some(pf => pf.includes('pool')) || desc.includes('piscina') || desc.includes('pool')) featMatch++; }
+    else if (f.includes('sea view') || f.includes('vista mar')) { if (pFeats.some(pf => pf.includes('sea') || pf.includes('view') || pf.includes('ocean')) || desc.includes('vista mar') || desc.includes('sea view')) featMatch++; }
+    else if (f.includes('country view') || f.includes('vista campo')) { if (desc.includes('vista') || desc.includes('view') || desc.includes('panoram')) featMatch++; }
+    else if (f.includes('garage') || f.includes('garagem')) { if ((property.parking || []).some(pk => pk.includes('garage')) || desc.includes('garagem') || desc.includes('garage')) featMatch++; }
+    else if (f.includes('office') || f.includes('escritório') || f.includes('escritorio')) { if (pFeats.some(pf => pf.includes('office')) || desc.includes('escritório') || desc.includes('office')) featMatch++; }
+    else if (f.includes('solar') || f.includes('painéis')) { if (pFeats.some(pf => pf.includes('solar')) || desc.includes('solar') || desc.includes('painéis')) featMatch++; }
+    else if (f.includes('fireplace') || f.includes('lareira')) { if (pFeats.some(pf => pf.includes('fireplace')) || desc.includes('lareira') || desc.includes('fireplace')) featMatch++; }
+    else if (f.includes('terrace') || f.includes('terraço') || f.includes('terraco')) { if (pFeats.some(pf => pf.includes('terrace') || pf.includes('balcony')) || desc.includes('terraço') || desc.includes('terrace')) featMatch++; }
+    else if (f.includes('balcony') || f.includes('varanda')) { if (pFeats.some(pf => pf.includes('balcony') || pf.includes('varanda')) || desc.includes('varanda') || desc.includes('balcony')) featMatch++; }
+    else if (f.includes('energy') || f.includes('eficiência') || f.includes('eficiencia')) { if ((property.epc_rating && ['A', 'B', 'A+'].includes(property.epc_rating)) || desc.includes('eficien') || desc.includes('energy')) featMatch++; }
+    else if (f.includes('wheelchair') || f.includes('acessível') || f.includes('acessivel') || f.includes('mobilidade')) { if (desc.includes('acessível') || desc.includes('acessivel') || desc.includes('wheelchair') || desc.includes('accessible') || desc.includes('mobilidade')) featMatch++; }
+    else if (f.includes('smart') || f.includes('inteligente')) { if (pFeats.some(pf => pf.includes('smart')) || desc.includes('smart') || desc.includes('inteligente') || desc.includes('domótica')) featMatch++; }
+    else if (f.includes('gated') || f.includes('condomínio') || f.includes('condominio')) { if (desc.includes('condomínio') || desc.includes('condominio') || desc.includes('gated') || desc.includes('closed')) featMatch++; }
+    else if (f.includes('gym') || f.includes('ginásio') || f.includes('ginasio') || f.includes('sport')) { if (enrichment?.sports_count_2km >= 1) featMatch++; }
+    else if (f.includes('large land') || f.includes('terreno grande')) { if (property.sqm >= 200 || desc.includes('terreno') || desc.includes('land') || desc.includes('quinta')) featMatch++; }
+    else if (f.includes('kitchen') || f.includes('cozinha')) { if (desc.includes('cozinha equipada') || desc.includes('kitchen') || desc.includes('moderna')) featMatch++; }
+    else if (f.includes('storage') || f.includes('arrecadação') || f.includes('arrecadacao')) { if (desc.includes('arrecadação') || desc.includes('arrecadacao') || desc.includes('arrumo') || desc.includes('storage')) featMatch++; }
+    else if (f.includes('character') || f.includes('historic') || f.includes('traça')) { if (desc.includes('tradicional') || desc.includes('rústic') || desc.includes('rustic') || desc.includes('pedra') || desc.includes('stone') || desc.includes('character')) featMatch++; }
   });
-  score += Math.min(featMatch * 3, 12);
+  score += Math.min(featMatch * 3, 15); // increased cap from 12 to 15 for more features
 
   // Pets
   const pets = (profile.pets || '').toLowerCase();
@@ -858,12 +870,6 @@ async function getCandidates(profile) {
     if (page2 && page2.length > 0) {
       allCandidates = [...allCandidates, ...page2];
     }
-  }
-
-  // Shuffle candidates to avoid insertion-order bias (Lourinhã always first)
-  for (let i = allCandidates.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [allCandidates[i], allCandidates[j]] = [allCandidates[j], allCandidates[i]];
   }
 
   console.log(`[getCandidates] ${allCandidates.length} candidates (budget: €${Math.round(budgetMin/1000)}K-€${Math.round(budgetMax/1000)}K, beds>=${profile.min_beds || 1}, sqm>=${profile.min_sqm || 'any'}${selectedConcelhos ? ', concelhos: ' + selectedConcelhos.join(',') : ''})`);
