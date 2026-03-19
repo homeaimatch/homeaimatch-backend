@@ -115,6 +115,8 @@ async function fetchNearbyAmenities(lat, lng, radiusM = 2000) {
     ['amenity', 'library'],
     ['amenity', 'place_of_worship'],
     ['amenity', 'marketplace'],
+    ['amenity', 'charging_station'],
+    ['amenity', 'coworking_space'],
   ];
 
   // Airport search uses a wider radius (50km) — separate query
@@ -180,11 +182,15 @@ function categorise(amenities) {
     shops: [],
     transport: [],
     cycling: [],
-    healthcare: [],
+    pharmacies: [],
+    hospitals: [],
     parks: [],
+    playgrounds: [],
     beaches: [],
     sports: [],
     tourism: [],
+    ev_charging: [],
+    coworking: [],
     other: [],
   };
 
@@ -197,11 +203,15 @@ function categorise(amenities) {
     else if (['supermarket', 'convenience', 'bakery', 'marketplace'].includes(t)) cats.shops.push(a);
     else if (['bus_station', 'bus_stop', 'station', 'halt', 'ferry_terminal'].includes(t)) cats.transport.push(a);
     else if (['bicycle_rental', 'bicycle_parking'].includes(t)) cats.cycling.push(a);
-    else if (['pharmacy', 'hospital', 'clinic', 'doctors'].includes(t)) cats.healthcare.push(a);
-    else if (['park', 'playground'].includes(t)) cats.parks.push(a);
+    else if (['pharmacy'].includes(t)) cats.pharmacies.push(a);
+    else if (['hospital', 'clinic', 'doctors'].includes(t)) cats.hospitals.push(a);
+    else if (t === 'playground') cats.playgrounds.push(a);
+    else if (['park'].includes(t)) cats.parks.push(a);
     else if (t === 'beach') cats.beaches.push(a);
     else if (['sports_centre', 'swimming_pool', 'fitness_centre'].includes(t)) cats.sports.push(a);
     else if (['museum', 'attraction', 'gallery', 'castle', 'monument'].includes(t)) cats.tourism.push(a);
+    else if (t === 'charging_station') cats.ev_charging.push(a);
+    else if (t === 'coworking_space') cats.coworking.push(a);
     else cats.other.push(a);
   }
 
@@ -229,7 +239,7 @@ function calcWalkability(cats) {
   else if (nearTransport.length >= 1) score += 1;
 
   // Healthcare within 1km
-  const nearHealth = cats.healthcare.filter(h => h.distance_km <= 1);
+  const nearHealth = [...cats.pharmacies, ...cats.hospitals].filter(h => h.distance_km <= 1);
   if (nearHealth.length >= 1) score += 1;
 
   // Parks/green space within 500m
@@ -278,11 +288,11 @@ function topN(arr, n = 3) {
 function computeVibe(cats, walkScore) {
   const vibes = [];
 
-  // Family-friendly: schools + parks + playgrounds + low bar count
+  // Family-friendly: schools + parks/playgrounds
   const schoolsNear = cats.schools.filter(s => s.distance_km <= 1.5).length;
   const parksNear = cats.parks.filter(p => p.distance_km <= 1).length;
-  const playgrounds = cats.parks.filter(p => p.type === 'playground' && p.distance_km <= 1).length;
-  if (schoolsNear >= 2 && parksNear >= 1) vibes.push('family-friendly');
+  const playgroundsNear = cats.playgrounds.filter(p => p.distance_km <= 1).length;
+  if ((schoolsNear >= 2 && parksNear >= 1) || playgroundsNear >= 2) vibes.push('family-friendly');
 
   // Nightlife: bars + restaurants in high density
   const barsNear = cats.bars.filter(b => b.distance_km <= 1).length;
@@ -353,16 +363,36 @@ export async function enrichWithOSM(property, radiusM = 2000) {
       transport_count_500m: cats.transport.filter(t => t.distance_km <= 0.5).length,
       nearest_transport: topN(cats.transport, 3),
       cycling_count_500m: cats.cycling.filter(c => c.distance_km <= 0.5).length,
-      healthcare_count_1km: cats.healthcare.filter(h => h.distance_km <= 1).length,
-      nearest_healthcare: topN(cats.healthcare, 2),
+      // Healthcare split: pharmacies vs hospitals/clinics
+      healthcare_count_1km: [...cats.pharmacies, ...cats.hospitals].filter(h => h.distance_km <= 1).length,
+      pharmacies_count_1km: cats.pharmacies.filter(p => p.distance_km <= 1).length,
+      nearest_pharmacy: cats.pharmacies[0] ? { name: cats.pharmacies[0].name, distance_km: cats.pharmacies[0].distance_km } : null,
+      hospitals_count_5km: cats.hospitals.filter(h => h.distance_km <= 5).length,
+      nearest_hospital: cats.hospitals[0] ? { name: cats.hospitals[0].name, distance_km: cats.hospitals[0].distance_km } : null,
+      nearest_healthcare: topN([...cats.pharmacies, ...cats.hospitals], 2),
+      // Parks & playgrounds
       parks_count_1km: cats.parks.filter(p => p.distance_km <= 1).length,
       nearest_park: cats.parks[0] ? { name: cats.parks[0].name, distance_km: cats.parks[0].distance_km } : null,
+      playgrounds_count_1km: cats.playgrounds.filter(p => p.distance_km <= 1).length,
+      nearest_playground: cats.playgrounds[0] ? { name: cats.playgrounds[0].name, distance_km: cats.playgrounds[0].distance_km } : null,
       beach_nearby: cats.beaches.length > 0,
       nearest_beach: cats.beaches[0] ? { name: cats.beaches[0].name, distance_km: cats.beaches[0].distance_km } : null,
       sports_count_2km: cats.sports.filter(s => s.distance_km <= 2).length,
       tourism_count_2km: cats.tourism.filter(t => t.distance_km <= 2).length,
-      nearest_airport: airports[0] ? { name: airports[0].name, distance_km: airports[0].distance_km } : null,
-      airports_50km: topN(airports, 3),
+      ev_charging_count_2km: cats.ev_charging.filter(e => e.distance_km <= 2).length,
+      nearest_ev_charging: cats.ev_charging[0] ? { name: cats.ev_charging[0].name, distance_km: cats.ev_charging[0].distance_km } : null,
+      coworking_count_2km: cats.coworking.filter(c => c.distance_km <= 2).length,
+      is_historic_area: cats.tourism.filter(t => t.distance_km <= 2).length >= 3,
+      // Airports — only major Portuguese commercial airports
+      nearest_airport: (() => {
+        const PT_AIRPORTS = ['lisbon', 'lisboa', 'humberto delgado', 'portela', 'porto', 'francisco sá carneiro', 'sá carneiro', 'faro'];
+        const major = airports.filter(a => PT_AIRPORTS.some(name => a.name.toLowerCase().includes(name)));
+        return major[0] ? { name: major[0].name, distance_km: major[0].distance_km } : null;
+      })(),
+      airports_50km: (() => {
+        const PT_AIRPORTS = ['lisbon', 'lisboa', 'humberto delgado', 'portela', 'porto', 'francisco sá carneiro', 'sá carneiro', 'faro'];
+        return airports.filter(a => PT_AIRPORTS.some(name => a.name.toLowerCase().includes(name))).slice(0, 3).map(a => ({ name: a.name, distance_km: a.distance_km }));
+      })(),
       // Computed neighbourhood vibe tags based on surrounding amenities
       computed_vibe: computeVibe(cats, walkScore),
       enriched_at: new Date().toISOString(),

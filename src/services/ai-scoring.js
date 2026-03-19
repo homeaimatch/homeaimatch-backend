@@ -122,11 +122,14 @@ NEIGHBOURHOOD DATA:
 - Schools: ${enrichment.schools || '?'} (${enrichment.schools_count_2km || 0} within 2km)
 - Restaurants: ${enrichment.restaurants_count_1km || 0}, Bars: ${enrichment.bars_count_1km || 0}, Shops: ${enrichment.shops_count_1km || 0} within 1km
 - Transport: ${enrichment.transport_count_500m || 0} stops, Cycling: ${enrichment.cycling_count_500m || 0} bike facilities within 500m
-- Healthcare: ${enrichment.healthcare_count_1km || 0} within 1km
-- Parks: ${enrichment.parks_count_1km || 0} within 1km
-- Tourism/culture: ${enrichment.tourism_count_2km || 0} within 2km
+- Pharmacies: ${enrichment.pharmacies_count_1km || 0} within 1km${enrichment.nearest_pharmacy ? ' (nearest: ' + enrichment.nearest_pharmacy.name + ' ' + enrichment.nearest_pharmacy.distance_km + 'km)' : ''}
+- Hospitals/clinics: ${enrichment.hospitals_count_5km || 0} within 5km${enrichment.nearest_hospital ? ' (nearest: ' + enrichment.nearest_hospital.name + ' ' + enrichment.nearest_hospital.distance_km + 'km)' : ''}
+- Parks: ${enrichment.parks_count_1km || 0}, Playgrounds: ${enrichment.playgrounds_count_1km || 0} within 1km
+- Tourism/culture: ${enrichment.tourism_count_2km || 0} within 2km${enrichment.is_historic_area ? ' (HISTORIC AREA)' : ''}
+- EV charging: ${enrichment.ev_charging_count_2km || 0} stations within 2km
+- Coworking: ${enrichment.coworking_count_2km || 0} spaces within 2km
 - Beach: ${enrichment.beach_nearby ? 'Yes — ' + (enrichment.nearest_beach?.name || '') + ' (' + (enrichment.nearest_beach?.distance_km || '?') + ' km)' : 'No'}
-- Airport: ${enrichment.nearest_airport ? enrichment.nearest_airport.name + ' (' + enrichment.nearest_airport.distance_km + ' km)' : 'Unknown'}
+- Airport: ${enrichment.nearest_airport ? enrichment.nearest_airport.name + ' (' + enrichment.nearest_airport.distance_km + ' km)' : 'No major airport nearby'}
 ` : ''}
 Score this property. Baseline is 65 — adjust based on how well it fits this buyer's lifestyle, vibe preferences, and priorities.`;
 
@@ -284,21 +287,26 @@ function scoreWithRules(profile, property, enrichment) {
 
   // Buyer type (+5)
   const bt = (profile.buyer_type || '').toLowerCase();
-  if ((bt.includes('retired') || bt.includes('reformado')) && enrichment?.healthcare_count_1km >= 1) { score += 3; }
+  if (bt.includes('retired') || bt.includes('reformado')) {
+    if (enrichment?.hospitals_count_5km >= 1) { score += 4; }
+    else if (enrichment?.pharmacies_count_1km >= 1) { score += 2; }
+  }
   if ((bt.includes('family') || bt.includes('família')) && ['excellent','good'].includes(enrichment?.schools)) { score += 4; highlights.push(pt ? 'Boas escolas perto' : 'Good schools nearby'); }
+  if ((bt.includes('family') || bt.includes('família')) && enrichment?.playgrounds_count_1km >= 1) { score += 3; highlights.push(pt ? 'Parques infantis perto' : 'Playgrounds nearby'); }
   if ((bt.includes('remote') || bt.includes('remoto')) && property.sqm >= 100) { score += 2; }
 
-  // Priorities (+3 each, max +9)
+  // Priorities (+3 each, max +12)
   const prios = (profile.priorities || []).map(p => p.toLowerCase());
   let hits = 0;
   if (prios.some(p => p.includes('beach') || p.includes('praia')) && enrichment?.beach_nearby) hits++;
   if (prios.some(p => p.includes('school') || p.includes('escola')) && ['excellent','good'].includes(enrichment?.schools)) hits++;
   if (prios.some(p => p.includes('walkable') || p.includes('caminhável')) && walkScore >= 7) hits++;
   if (prios.some(p => p.includes('restaurant') || p.includes('restaurante')) && enrichment?.restaurants_count_1km >= 3) hits++;
-  if (prios.some(p => p.includes('healthcare') || p.includes('saúde')) && enrichment?.healthcare_count_1km >= 1) hits++;
+  if (prios.some(p => p.includes('hospital') || p.includes('saúde') || p.includes('healthcare')) && (enrichment?.hospitals_count_5km >= 1 || enrichment?.healthcare_count_1km >= 1)) hits++;
   if (prios.some(p => p.includes('peace') || p.includes('paz') || p.includes('sossego')) && walkScore <= 5) hits++;
   if (prios.some(p => p.includes('nature') || p.includes('natureza')) && enrichment?.parks_count_1km >= 2) hits++;
-  score += Math.min(hits * 3, 9);
+  if (prios.some(p => p.includes('playground') || p.includes('infantil') || p.includes('infantis')) && enrichment?.playgrounds_count_1km >= 1) hits++;
+  score += Math.min(hits * 3, 12);
 
   // Convenience (+3)
   if (enrichment?.shops_count_1km >= 3 && enrichment?.restaurants_count_1km >= 3) { score += 3; }
