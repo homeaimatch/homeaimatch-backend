@@ -469,6 +469,45 @@ app.post('/api/enrich/:id', async (req, res) => {
   res.json({ enrichment });
 });
 
+// Enrichment stats for admin dashboard
+app.get('/api/admin/enrichment-stats', async (req, res) => {
+  try {
+    // Fetch enrichment data with pagination
+    const [e1, e2] = await Promise.all([
+      supabase.from('property_enrichment').select('computed_vibe, beach_nearby, is_historic_area, playgrounds_count_1km, hospitals_count_5km, ev_charging_count_2km, walkability').eq('enrichment_source', 'openstreetmap').range(0, 999),
+      supabase.from('property_enrichment').select('computed_vibe, beach_nearby, is_historic_area, playgrounds_count_1km, hospitals_count_5km, ev_charging_count_2km, walkability').eq('enrichment_source', 'openstreetmap').range(1000, 4999),
+    ]);
+    const allEnrichment = [...(e1.data || []), ...(e2.data || [])];
+
+    // Aggregate vibe counts
+    const vibes = {};
+    let beachCount = 0, historicCount = 0, playgroundCount = 0, hospitalCount = 0, evCount = 0;
+    let walkSum = 0, walkN = 0;
+    allEnrichment.forEach(e => {
+      (e.computed_vibe || []).forEach(v => { vibes[v] = (vibes[v] || 0) + 1; });
+      if (e.beach_nearby) beachCount++;
+      if (e.is_historic_area) historicCount++;
+      if (e.playgrounds_count_1km > 0) playgroundCount++;
+      if (e.hospitals_count_5km > 0) hospitalCount++;
+      if (e.ev_charging_count_2km > 0) evCount++;
+      if (e.walkability != null) { walkSum += e.walkability; walkN++; }
+    });
+
+    res.json({
+      total: allEnrichment.length,
+      vibes,
+      beach_count: beachCount,
+      historic_count: historicCount,
+      playground_count: playgroundCount,
+      hospital_count: hospitalCount,
+      ev_count: evCount,
+      avg_walkability: walkN > 0 ? walkSum / walkN : null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Batch enrich: enrich all properties that don't have enrichment data yet
 app.post('/api/admin/enrich-all', async (req, res) => {
   const { force } = req.body || {};
