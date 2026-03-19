@@ -699,9 +699,9 @@ function quickPreScore(profile, property, enrichment) {
   } else if (setting.includes('country') || setting.includes('campo')) {
     if (nType === 'rural') score += 6;
   } else if (setting.includes('historic') || setting.includes('históric')) {
-    // Historic towns like Óbidos — check city name
-    const hCities = ['óbidos', 'obidos', 'alcobaça', 'alcobaca'];
-    if (hCities.some(c => (property.city || '').toLowerCase().includes(c))) score += 6;
+    // Use is_historic_area from enrichment OR known city names
+    const hCities = ['óbidos', 'obidos', 'alcobaça', 'alcobaca', 'nazaré', 'nazare'];
+    if (enrichment?.is_historic_area || hCities.some(c => (property.city || '').toLowerCase().includes(c))) score += 6;
   }
 
   // Priorities alignment
@@ -710,10 +710,11 @@ function quickPreScore(profile, property, enrichment) {
   if (prios.some(p => p.includes('school') || p.includes('escola')) && (enrichment?.schools === 'excellent' || enrichment?.schools === 'good')) score += 4;
   if (prios.some(p => p.includes('walkable') || p.includes('caminhável')) && walk >= 7) score += 4;
   if (prios.some(p => p.includes('restaurant') || p.includes('restaurante')) && enrichment?.restaurants_count_1km >= 3) score += 3;
-  if (prios.some(p => p.includes('healthcare') || p.includes('saúde') || p.includes('saude')) && enrichment?.healthcare_count_1km >= 1) score += 3;
+  if (prios.some(p => p.includes('hospital') || p.includes('saúde') || p.includes('saude') || p.includes('healthcare')) && (enrichment?.hospitals_count_5km >= 1 || enrichment?.healthcare_count_1km >= 1)) score += 3;
   if (prios.some(p => p.includes('transport') || p.includes('transporte')) && enrichment?.transport_count_500m >= 2) score += 3;
   if (prios.some(p => p.includes('peace') || p.includes('quiet') || p.includes('paz') || p.includes('sossego')) && walk <= 4) score += 3;
   if (prios.some(p => p.includes('nature') || p.includes('natureza')) && enrichment?.parks_count_1km >= 2) score += 3;
+  if (prios.some(p => p.includes('playground') || p.includes('infantil') || p.includes('infantis')) && (enrichment?.playgrounds_count_1km >= 1)) score += 3;
 
   // Feature matching
   const feats = (profile.features || []).map(f => f.toLowerCase().replace(/^[^\w]*/, '')); // strip emoji prefix
@@ -739,7 +740,8 @@ function quickPreScore(profile, property, enrichment) {
     else if (f.includes('large land') || f.includes('terreno grande')) { if (property.sqm >= 200 || desc.includes('terreno') || desc.includes('land') || desc.includes('quinta')) featMatch++; }
     else if (f.includes('kitchen') || f.includes('cozinha')) { if (desc.includes('cozinha equipada') || desc.includes('kitchen') || desc.includes('moderna')) featMatch++; }
     else if (f.includes('storage') || f.includes('arrecadação') || f.includes('arrecadacao')) { if (desc.includes('arrecadação') || desc.includes('arrecadacao') || desc.includes('arrumo') || desc.includes('storage')) featMatch++; }
-    else if (f.includes('character') || f.includes('historic') || f.includes('traça')) { if (desc.includes('tradicional') || desc.includes('rústic') || desc.includes('rustic') || desc.includes('pedra') || desc.includes('stone') || desc.includes('character')) featMatch++; }
+    else if (f.includes('ev charging') || f.includes('carregamento ev')) { if ((property.parking || []).some(pk => pk.includes('ev')) || enrichment?.ev_charging_count_2km >= 1 || desc.includes('carregamento') || desc.includes('ev charging')) featMatch++; }
+    else if (f.includes('character') || f.includes('historic') || f.includes('traça')) { if (desc.includes('tradicional') || desc.includes('rústic') || desc.includes('rustic') || desc.includes('pedra') || desc.includes('stone') || desc.includes('character') || enrichment?.is_historic_area) featMatch++; }
   });
   score += Math.min(featMatch * 3, 15); // increased cap from 12 to 15 for more features
 
@@ -771,15 +773,18 @@ function quickPreScore(profile, property, enrichment) {
   // Buyer type specific bonuses
   const bt = (profile.buyer_type || '').toLowerCase();
   if (bt.includes('retired') || bt.includes('reformado')) {
-    if (enrichment?.healthcare_count_1km >= 1) score += 3;
+    if (enrichment?.hospitals_count_5km >= 1) score += 4; // hospital within 5km important for retirees
+    else if (enrichment?.pharmacies_count_1km >= 1) score += 2; // pharmacy is ok but not as good
     if (walk >= 5) score += 2; // walkability matters for retirees
   } else if (bt.includes('family') || bt.includes('família') || bt.includes('familia')) {
     if (enrichment?.schools === 'excellent') score += 4;
+    else if (enrichment?.schools === 'good') score += 2;
+    if (enrichment?.playgrounds_count_1km >= 1) score += 3; // playgrounds very important for families
     if (enrichment?.parks_count_1km >= 1) score += 2;
   } else if (bt.includes('remote') || bt.includes('remoto')) {
     if (property.sqm >= 100) score += 2; // space for office
+    if (enrichment?.coworking_count_2km >= 1) score += 2; // coworking nearby is a plus
   } else if (bt.includes('investor') || bt.includes('investidor')) {
-    // Investors care about location and price/sqm ratio
     if (property.price_per_sqm && property.price_per_sqm < 2000) score += 3;
   }
 
