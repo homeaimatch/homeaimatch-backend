@@ -9,6 +9,14 @@
  * POST /api/leads           — Submit a lead (contact agent)
  * POST /api/subscribe       — Email signup
  * GET  /api/health          — Health check
+ * 
+ * Service Providers:
+ * GET  /api/service-providers              — Public: list active providers (filterable)
+ * GET  /api/admin/service-providers        — Admin: list all providers
+ * POST /api/admin/service-providers        — Admin: create provider
+ * PUT  /api/admin/service-providers/:id    — Admin: update provider
+ * DELETE /api/admin/service-providers/:id  — Admin: delete provider
+ * PATCH /api/admin/service-providers/:id/toggle — Admin: toggle active/featured
  */
 
 import express from 'express';
@@ -1819,6 +1827,198 @@ app.post('/api/agents/reset-password', async (req, res) => {
   } catch (err) {
     console.error('Reset password error:', err.message);
     res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// ============================================================
+// SERVICE PROVIDERS — Public & Admin
+// ============================================================
+
+// Public: Get active service providers (filtered by category/area)
+app.get('/api/service-providers', async (req, res) => {
+  try {
+    const { category, area, lang } = req.query;
+
+    let query = supabase
+      .from('service_providers')
+      .select('id, name, category, description, description_pt, phone, email, website, logo_url, areas_served, languages, featured, display_order')
+      .eq('active', true)
+      .order('featured', { ascending: false })
+      .order('display_order', { ascending: true })
+      .order('name', { ascending: true });
+
+    if (category) {
+      query = query.eq('category', category);
+    }
+
+    // Area filter — match against areas_served array using contains
+    if (area) {
+      query = query.contains('areas_served', [area]);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    // If lang=pt, swap description for description_pt where available
+    const providers = (data || []).map(p => ({
+      ...p,
+      description: (lang === 'pt' && p.description_pt) ? p.description_pt : p.description,
+    }));
+
+    res.json({ providers, count: providers.length });
+  } catch (err) {
+    console.error('Service providers error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: List all service providers (including inactive)
+app.get('/api/admin/service-providers', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('service_providers')
+      .select('*')
+      .order('category', { ascending: true })
+      .order('display_order', { ascending: true })
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ providers: data || [], count: (data || []).length });
+  } catch (err) {
+    console.error('Admin service providers list error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Create a service provider
+app.post('/api/admin/service-providers', async (req, res) => {
+  try {
+    const {
+      name, category, description, description_pt,
+      phone, email, website, logo_url,
+      areas_served, languages, featured, active, display_order, notes
+    } = req.body;
+
+    if (!name || !category) {
+      return res.status(400).json({ error: 'Name and category are required' });
+    }
+
+    const validCategories = [
+      'mortgage', 'insurance', 'legal', 'immigration_lawyer', 'fiscal_rep',
+      'surveyor', 'builder', 'architect', 'electrician', 'plumber',
+      'property_management', 'cleaning', 'landscaping', 'relocation',
+      'vet', 'pool_maintenance', 'ev_charging', 'solar_installer'
+    ];
+    if (!validCategories.includes(category)) {
+      return res.status(400).json({ error: `Invalid category. Must be one of: ${validCategories.join(', ')}` });
+    }
+
+    const { data, error } = await supabase
+      .from('service_providers')
+      .insert({
+        name,
+        category,
+        description: description || '',
+        description_pt: description_pt || '',
+        phone: phone || '',
+        email: email || '',
+        website: website || '',
+        logo_url: logo_url || '',
+        areas_served: areas_served || ['all'],
+        languages: languages || ['pt', 'en'],
+        featured: featured || false,
+        active: active !== false, // default true
+        display_order: display_order || 0,
+        notes: notes || '',
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log(`[Service Provider] Created: ${name} (${category})`);
+    res.json({ provider: data });
+  } catch (err) {
+    console.error('Create service provider error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Update a service provider
+app.put('/api/admin/service-providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updates = req.body;
+
+    // Remove fields that shouldn't be updated directly
+    delete updates.id;
+    delete updates.created_at;
+
+    const { data, error } = await supabase
+      .from('service_providers')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    console.log(`[Service Provider] Updated: ${data.name} (${data.category})`);
+    res.json({ provider: data });
+  } catch (err) {
+    console.error('Update service provider error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Delete a service provider
+app.delete('/api/admin/service-providers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase
+      .from('service_providers')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    console.log(`[Service Provider] Deleted: ${id}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete service provider error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Admin: Toggle active/featured status (convenience endpoint)
+app.patch('/api/admin/service-providers/:id/toggle', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { field } = req.body; // 'active' or 'featured'
+
+    if (!['active', 'featured'].includes(field)) {
+      return res.status(400).json({ error: 'Field must be "active" or "featured"' });
+    }
+
+    // Get current value
+    const { data: current } = await supabase
+      .from('service_providers')
+      .select(field)
+      .eq('id', id)
+      .single();
+
+    if (!current) return res.status(404).json({ error: 'Provider not found' });
+
+    const { data, error } = await supabase
+      .from('service_providers')
+      .update({ [field]: !current[field] })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json({ provider: data });
+  } catch (err) {
+    console.error('Toggle service provider error:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
